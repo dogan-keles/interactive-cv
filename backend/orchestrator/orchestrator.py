@@ -14,7 +14,7 @@ from .types import Intent, Language, RequestContext
 
 class Agent(Protocol):
     """Protocol for agent interface."""
-    
+
     async def process(self, context: RequestContext) -> str:
         """Process request with context."""
         ...
@@ -39,19 +39,19 @@ class GuardrailAgentProtocol(Protocol):
 class Orchestrator:
     """
     Central orchestrator for request routing.
-    
+
     Responsibilities:
-    1. Language detection
-    2. Intent detection
-    3. Agent routing
-    4. Response aggregation
-    
+    - Language detection
+    - Intent detection
+    - Agent routing
+    - Response aggregation
+
     Does NOT:
     - Access databases directly
     - Generate content without agent input
     - Call LLM directly
     """
-    
+
     def __init__(
         self,
         profile_agent: Optional[Agent] = None,
@@ -61,29 +61,19 @@ class Orchestrator:
     ):
         """
         Initialize orchestrator with agent instances.
-        
-        Args:
-            profile_agent: Profile agent instance
-            github_agent: GitHub agent instance
-            cv_agent: CV agent instance
-            guardrail_agent: Guardrail agent instance
+
+        Agents can be injected here or later (e.g., per-request) by assigning
+        to self.profile_agent / self.github_agent / self.cv_agent.
+        guardrail_agent MUST be provided, because every response passes through it.
         """
-        # Agents will be injected at runtime
-        # For now, raise error if not provided (agents must be implemented)
-        if profile_agent is None:
-            raise ValueError("profile_agent must be provided")
-        if github_agent is None:
-            raise ValueError("github_agent must be provided")
-        if cv_agent is None:
-            raise ValueError("cv_agent must be provided")
         if guardrail_agent is None:
             raise ValueError("guardrail_agent must be provided")
-        
+
         self.profile_agent = profile_agent
         self.github_agent = github_agent
         self.cv_agent = cv_agent
         self.guardrail_agent = guardrail_agent
-    
+
     async def process_request(
         self,
         user_query: str,

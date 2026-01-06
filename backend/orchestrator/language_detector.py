@@ -125,3 +125,5 @@ def detect_language(text: str) -> Language:
     return _language_detector.detect(text)
 
 
+
+
