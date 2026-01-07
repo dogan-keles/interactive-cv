@@ -50,6 +50,7 @@ async def chat(
             user_query=request.query,
             profile_id=request.profile_id,
         )
+        print(response)
 
         return ChatResponse(
             response=response,
