@@ -12,7 +12,7 @@ Agents receive RequestContext with:
 - rag_context: Optional pre-retrieved RAG context
 """
 
-from orchestrator.types import Language
+from backend.orchestrator.types import Language
 
 
 # ============================================================================

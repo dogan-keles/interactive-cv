@@ -66,7 +66,7 @@ docker-compose up -d
 docker-compose exec ollama ollama pull llama3
 
 # Database migration (gerekirse)
-docker-compose exec backend python -c "from data_access.knowledge_base.postgres import Base; from infrastructure.database import engine; Base.metadata.create_all(bind=engine)"
+docker-compose exec backend python -c "from backend.data_access.knowledge_base.postgres import Base; from backend.infrastructure.database import engine; Base.metadata.create_all(bind=engine)"
 ```
 
 #### 1.3 Nginx Reverse Proxy (Önerilen)
@@ -297,7 +297,7 @@ docker-compose up -d
 docker-compose exec ollama ollama pull llama3
 
 # 6. Database setup
-docker-compose exec backend python -c "from data_access.knowledge_base.postgres import Base; from infrastructure.database import engine; Base.metadata.create_all(bind=engine)"
+docker-compose exec backend python -c "from backend.data_access.knowledge_base.postgres import Base; from backend.infrastructure.database import engine; Base.metadata.create_all(bind=engine)"
 
 # 7. Test
 curl http://localhost:8000/health

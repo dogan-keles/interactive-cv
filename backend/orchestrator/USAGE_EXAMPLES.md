@@ -3,11 +3,11 @@
 ## Basic Usage
 
 ```python
-from orchestrator import Orchestrator, RequestContext
-from agents.profile_agent import ProfileAgent
-from agents.github_agent import GitHubAgent
-from agents.cv_agent import CVAgent
-from agents.guardrail_agent import GuardrailAgent
+from backend.orchestrator import Orchestrator, RequestContext
+from backend.agents.profile_agent import ProfileAgent
+from backend.agents.github_agent import GitHubAgent
+from backend.agents.cv_agent import CVAgent
+from backend.agents.guardrail_agent import GuardrailAgent
 
 # Initialize agents
 profile_agent = ProfileAgent()
@@ -118,8 +118,8 @@ response = await orchestrator.process_request(
 
 ```python
 # Pre-retrieve RAG context
-from tools.semantic_search_tools import semantic_search_with_context
-from data_access.vector_db import RAGRetrievalPipeline
+from backend.tools.semantic_search_tools import semantic_search_with_context
+from backend.data_access.vector_db import RAGRetrievalPipeline
 
 retrieval_pipeline = RAGRetrievalPipeline(...)
 rag_context = await semantic_search_with_context(
@@ -139,7 +139,7 @@ response = await orchestrator.process_with_rag_context(
 ## Direct Language/Intent Detection
 
 ```python
-from orchestrator import detect_language, detect_intent, Language
+from backend.orchestrator import detect_language, detect_intent, Language
 
 # Detect language
 text = "Doğan'ın Python deneyimi nedir?"
@@ -154,7 +154,7 @@ intent = detect_intent(text, language)
 ## RequestContext Usage
 
 ```python
-from orchestrator import RequestContext, Language, Intent
+from backend.orchestrator import RequestContext, Language, Intent
 
 # Create context manually (if needed)
 context = RequestContext(
@@ -181,7 +181,7 @@ context_dict = context.to_dict()
 Agents must implement the following interface:
 
 ```python
-from orchestrator import RequestContext
+from backend.orchestrator import RequestContext
 
 class ProfileAgent:
     async def process(self, context: RequestContext) -> str:

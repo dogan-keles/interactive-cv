@@ -7,8 +7,8 @@ Agents must NOT access the vector store directly.
 
 from typing import List, Optional
 
-from data_access.vector_db.retrieval import RAGRetrievalPipeline
-from data_access.vector_db.vector_store import RetrievedChunk, SourceType
+from backend.data_access.vector_db.retrieval import RAGRetrievalPipeline
+from backend.data_access.vector_db.vector_store import RetrievedChunk, SourceType
 
 
 async def semantic_search(

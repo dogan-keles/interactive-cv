@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from contextlib import contextmanager
 import os
 
-from data_access.knowledge_base.postgres import Base
+from backend.data_access.knowledge_base.postgres import Base
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/interactive_cv")
 

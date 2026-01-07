@@ -4,8 +4,8 @@ Chat API routes.
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from api.schemas.chat import ChatRequest, ChatResponse
-from orchestrator.orchestrator import Orchestrator
+from backend.api.schemas.chat import ChatRequest, ChatResponse
+from backend.orchestrator.orchestrator import Orchestrator
 
 router = APIRouter(
     prefix="/api/chat",

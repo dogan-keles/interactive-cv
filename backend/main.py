@@ -11,13 +11,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Provider ve Ajanlar - İsmi GroqProvider (q ile) olarak güncelledik
-from infrastructure.llm.provider import GroqProvider
-from agents.profile_agent import ProfileAgent
-from agents.github_agent import GitHubAgent
-from agents.cv_agent import CVAgent
-from agents.guardrail_agent import GuardrailAgent
-from orchestrator.orchestrator import Orchestrator
-from api.routes import chat
+from backend.infrastructure.llm.provider import GroqProvider
+from backend.agents.profile_agent import ProfileAgent
+from backend.agents.github_agent import GitHubAgent
+from backend.agents.cv_agent import CVAgent
+from backend.agents.guardrail_agent import GuardrailAgent
+from backend.orchestrator.orchestrator import Orchestrator
+from backend.api.routes import chat
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

@@ -7,9 +7,9 @@ Uses LLM only, no tools or database access.
 
 import logging
 
-from infrastructure.llm.provider import BaseLLMProvider
-from orchestrator.types import RequestContext
-from agents.prompts import (
+from backend.infrastructure.llm.provider import BaseLLMProvider
+from backend.orchestrator.types import RequestContext
+from backend.agents.prompts import (
     GUARDRAIL_AGENT_SYSTEM_PROMPT,
     GUARDRAIL_AGENT_INSTRUCTIONS,
     get_language_instruction,

@@ -9,8 +9,8 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from data_access.file_storage.storage import FileStorage
-from tools.profile_tools import (
+from backend.data_access.file_storage.storage import FileStorage
+from backend.tools.profile_tools import (
     get_profile_basic_info,
     get_profile_summary,
     get_profile_skills,

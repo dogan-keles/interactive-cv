@@ -11,7 +11,7 @@ from datetime import date
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
-from data_access.knowledge_base.postgres import Profile, Skill, Experience, Project
+from backend.data_access.knowledge_base.postgres import Profile, Skill, Experience, Project
 
 
 async def get_profile_summary(

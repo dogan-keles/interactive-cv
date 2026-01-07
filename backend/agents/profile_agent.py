@@ -10,16 +10,16 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from infrastructure.llm.provider import BaseLLMProvider
-from orchestrator.types import RequestContext, Language
-from data_access.vector_db.retrieval import RAGRetrievalPipeline
-from agents.prompts import (
+from backend.infrastructure.llm.provider import BaseLLMProvider
+from backend.orchestrator.types import RequestContext, Language
+from backend.data_access.vector_db.retrieval import RAGRetrievalPipeline
+from backend.agents.prompts import (
     PROFILE_AGENT_SYSTEM_PROMPT,
     PROFILE_AGENT_INSTRUCTIONS,
     get_language_instruction,
 )
-from tools import profile_tools
-from tools import semantic_search_tools
+from backend.tools import profile_tools
+from backend.tools import semantic_search_tools
 
 logger = logging.getLogger(__name__)
 

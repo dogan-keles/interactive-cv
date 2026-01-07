@@ -37,8 +37,8 @@ All agents receive a `RequestContext` object containing:
 
 **Example Usage**:
 ```python
-from agents.prompts import PROFILE_AGENT_SYSTEM_PROMPT, PROFILE_AGENT_INSTRUCTIONS
-from orchestrator.types import RequestContext
+from backend.agents.prompts import PROFILE_AGENT_SYSTEM_PROMPT, PROFILE_AGENT_INSTRUCTIONS
+from backend.orchestrator.types import RequestContext
 
 async def process(self, context: RequestContext) -> str:
     # Build prompt with system prompt + instructions + context
@@ -70,7 +70,7 @@ async def process(self, context: RequestContext) -> str:
 
 **Example Usage**:
 ```python
-from agents.prompts import GITHUB_AGENT_SYSTEM_PROMPT, GITHUB_AGENT_INSTRUCTIONS
+from backend.agents.prompts import GITHUB_AGENT_SYSTEM_PROMPT, GITHUB_AGENT_INSTRUCTIONS
 
 async def process(self, context: RequestContext) -> str:
     prompt = f"{GITHUB_AGENT_SYSTEM_PROMPT}\n\n{GITHUB_AGENT_INSTRUCTIONS}"
@@ -97,7 +97,7 @@ async def process(self, context: RequestContext) -> str:
 
 **Example Usage**:
 ```python
-from agents.prompts import CV_AGENT_SYSTEM_PROMPT, CV_AGENT_INSTRUCTIONS
+from backend.agents.prompts import CV_AGENT_SYSTEM_PROMPT, CV_AGENT_INSTRUCTIONS
 
 async def process(self, context: RequestContext) -> str:
     prompt = f"{CV_AGENT_SYSTEM_PROMPT}\n\n{CV_AGENT_INSTRUCTIONS}"
@@ -121,7 +121,7 @@ async def process(self, context: RequestContext) -> str:
 
 **Example Usage**:
 ```python
-from agents.prompts import GUARDRAIL_AGENT_SYSTEM_PROMPT, GUARDRAIL_AGENT_INSTRUCTIONS
+from backend.agents.prompts import GUARDRAIL_AGENT_SYSTEM_PROMPT, GUARDRAIL_AGENT_INSTRUCTIONS
 
 async def handle_out_of_scope(self, context: RequestContext) -> str:
     prompt = f"{GUARDRAIL_AGENT_SYSTEM_PROMPT}\n\n{GUARDRAIL_AGENT_INSTRUCTIONS}"
@@ -136,8 +136,8 @@ async def handle_out_of_scope(self, context: RequestContext) -> str:
 All prompts include language instructions. Use `get_language_instruction()` for additional language-specific guidance:
 
 ```python
-from agents.prompts import get_language_instruction
-from orchestrator.types import Language
+from backend.agents.prompts import get_language_instruction
+from backend.orchestrator.types import Language
 
 instruction = get_language_instruction(context.language)
 # Adds: "Respond in English" or "Yanıtınızı Türkçe olarak verin"
@@ -173,7 +173,7 @@ Agents must use tools for all data access:
 
 ```python
 # RAG retrieval
-from tools.semantic_search_tools import semantic_search_with_context
+from backend.tools.semantic_search_tools import semantic_search_with_context
 
 context_text = await semantic_search_with_context(
     query=context.user_query,
@@ -183,7 +183,7 @@ context_text = await semantic_search_with_context(
 )
 
 # SQL profile queries
-from tools.profile_tools import get_profile_skills
+from backend.tools.profile_tools import get_profile_skills
 
 skills = await get_profile_skills(
     profile_id=context.profile_id,

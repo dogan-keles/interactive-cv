@@ -71,8 +71,8 @@ Make sure your PostgreSQL database has the required tables:
 
 You can use SQLAlchemy to create tables:
 ```python
-from data_access.knowledge_base.postgres import Base
-from infrastructure.database import engine
+from backend.data_access.knowledge_base.postgres import Base
+from backend.infrastructure.database import engine
 
 Base.metadata.create_all(bind=engine)
 ```

@@ -11,7 +11,7 @@ import logging
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
-from data_access.knowledge_base.postgres import Profile, Project
+from backend.data_access.knowledge_base.postgres import Profile, Project
 
 logger = logging.getLogger(__name__)
 

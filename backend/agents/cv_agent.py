@@ -1,7 +1,7 @@
 import logging
 from typing import Optional
-from infrastructure.llm.provider import BaseLLMProvider
-from orchestrator.types import RequestContext
+from backend.infrastructure.llm.provider import BaseLLMProvider
+from backend.orchestrator.types import RequestContext
 
 logger = logging.getLogger(__name__)
 
