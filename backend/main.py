@@ -99,3 +99,6 @@ async def health():
         "llm_provider": "groq",
         "mode": "mock_data_enabled"
     }
+@app.get("/")
+def root():
+    return {"message": "API is running 🚀"}
