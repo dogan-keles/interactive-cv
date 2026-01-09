@@ -1,17 +1,58 @@
 """
-Profile tools for agents.
+Profile data access tools.
 
-Agents use these tools to query structured profile data from PostgreSQL.
-Agents must NOT access the database directly.
+Functions for retrieving structured profile data from PostgreSQL.
+Used by ProfileAgent to answer questions about skills, experience, etc.
 """
 
-from typing import List, Optional
-from datetime import date
-
+from typing import List, Dict, Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+import logging
 
-from backend.data_access.knowledge_base.postgres import Profile, Skill, Experience, Project
+from backend.data_access.knowledge_base.postgres import (
+    Profile,
+    Skill,
+    Experience,
+    Project,
+)
+
+logger = logging.getLogger(__name__)
+
+
+async def get_profile_basic_info(
+    profile_id: int,
+    db_session: Session,
+) -> Optional[Dict]:
+    """
+    Get basic profile information.
+    
+    Args:
+        profile_id: Profile ID
+        db_session: Database session
+        
+    Returns:
+        Dictionary with basic info or None if not found
+    """
+    try:
+        profile = db_session.query(Profile).filter(Profile.id == profile_id).first()
+        
+        if not profile:
+            logger.warning(f"Profile {profile_id} not found")
+            return None
+        
+        return {
+            "id": profile.id,
+            "name": profile.name,
+            "email": profile.email,
+            "location": profile.location,
+            "summary": profile.summary,
+            "linkedin_url": profile.linkedin_url,
+            "github_username": profile.github_username,
+        }
+    
+    except Exception as e:
+        logger.error(f"Error fetching profile basic info: {e}")
+        return None
 
 
 async def get_profile_summary(
@@ -22,157 +63,154 @@ async def get_profile_summary(
     Get profile summary text.
     
     Args:
-        profile_id: Profile identifier
-        db_session: SQLAlchemy database session
+        profile_id: Profile ID
+        db_session: Database session
         
     Returns:
-        Profile summary text or None
+        Summary text or None
     """
-    result = db_session.execute(
-        select(Profile).where(Profile.id == profile_id)
-    )
-    profile = result.scalar_one_or_none()
+    try:
+        profile = db_session.query(Profile).filter(Profile.id == profile_id).first()
+        return profile.summary if profile else None
     
-    if not profile:
+    except Exception as e:
+        logger.error(f"Error fetching profile summary: {e}")
         return None
-    
-    return profile.summary
 
 
 async def get_profile_skills(
     profile_id: int,
     db_session: Session,
-) -> List[dict]:
+) -> List[Dict]:
     """
     Get all skills for a profile.
     
     Args:
-        profile_id: Profile identifier
-        db_session: SQLAlchemy database session
+        profile_id: Profile ID
+        db_session: Database session
         
     Returns:
-        List of skill dictionaries with 'id', 'name', 'category', 'proficiency_level'
+        List of skill dictionaries
     """
-    result = db_session.execute(
-        select(Skill).where(Skill.profile_id == profile_id)
-    )
-    skills = result.scalars().all()
+    try:
+        skills = db_session.query(Skill).filter(Skill.profile_id == profile_id).all()
+        
+        return [
+            {
+                "id": skill.id,
+                "name": skill.name,
+                "category": skill.category,
+                "proficiency_level": skill.proficiency_level,
+            }
+            for skill in skills
+        ]
     
-    return [
-        {
-            "id": skill.id,
-            "name": skill.name,
-            "category": skill.category,
-            "proficiency_level": skill.proficiency_level,
-        }
-        for skill in skills
-    ]
+    except Exception as e:
+        logger.error(f"Error fetching skills: {e}")
+        return []
 
 
 async def get_profile_experiences(
     profile_id: int,
     db_session: Session,
-) -> List[dict]:
+) -> List[Dict]:
     """
     Get all work experiences for a profile.
     
     Args:
-        profile_id: Profile identifier
-        db_session: SQLAlchemy database session
+        profile_id: Profile ID
+        db_session: Database session
         
     Returns:
-        List of experience dictionaries with 'id', 'company', 'role', 'start_date',
-        'end_date', 'description', 'location'
+        List of experience dictionaries
     """
-    result = db_session.execute(
-        select(Experience)
-        .where(Experience.profile_id == profile_id)
-        .order_by(Experience.start_date.desc())
-    )
-    experiences = result.scalars().all()
+    try:
+        experiences = db_session.query(Experience).filter(
+            Experience.profile_id == profile_id
+        ).order_by(Experience.start_date.desc()).all()
+        
+        return [
+            {
+                "id": exp.id,
+                "company": exp.company,
+                "role": exp.role,
+                "start_date": exp.start_date.isoformat() if exp.start_date else None,
+                "end_date": exp.end_date.isoformat() if exp.end_date else "Present",
+                "description": exp.description,
+                "location": exp.location,
+            }
+            for exp in experiences
+        ]
     
-    return [
-        {
-            "id": exp.id,
-            "company": exp.company,
-            "role": exp.role,
-            "start_date": exp.start_date.isoformat() if exp.start_date else None,
-            "end_date": exp.end_date.isoformat() if exp.end_date else None,
-            "description": exp.description,
-            "location": exp.location,
-        }
-        for exp in experiences
-    ]
+    except Exception as e:
+        logger.error(f"Error fetching experiences: {e}")
+        return []
 
 
 async def get_profile_projects(
     profile_id: int,
     db_session: Session,
-) -> List[dict]:
+) -> List[Dict]:
     """
     Get all projects for a profile.
     
     Args:
-        profile_id: Profile identifier
-        db_session: SQLAlchemy database session
+        profile_id: Profile ID
+        db_session: Database session
         
     Returns:
-        List of project dictionaries with 'id', 'title', 'description', 'tech_stack',
-        'relevance_tags', 'github_url', 'demo_url'
+        List of project dictionaries
     """
-    result = db_session.execute(
-        select(Project).where(Project.profile_id == profile_id)
-    )
-    projects = result.scalars().all()
+    try:
+        projects = db_session.query(Project).filter(
+            Project.profile_id == profile_id
+        ).all()
+        
+        return [
+            {
+                "id": proj.id,
+                "title": proj.title,
+                "description": proj.description,
+                "tech_stack": proj.tech_stack,
+                "relevance_tags": proj.relevance_tags,
+                "github_url": proj.github_url,
+                "demo_url": proj.demo_url,
+            }
+            for proj in projects
+        ]
     
-    return [
-        {
-            "id": project.id,
-            "title": project.title,
-            "description": project.description,
-            "tech_stack": project.tech_stack if project.tech_stack else [],
-            "relevance_tags": project.relevance_tags if project.relevance_tags else [],
-            "github_url": project.github_url,
-            "demo_url": project.demo_url,
-        }
-        for project in projects
-    ]
+    except Exception as e:
+        logger.error(f"Error fetching projects: {e}")
+        return []
 
 
-async def get_profile_basic_info(
+async def get_full_profile(
     profile_id: int,
     db_session: Session,
-) -> Optional[dict]:
+) -> Optional[Dict]:
     """
-    Get basic profile information (name, email, location, etc.).
+    Get complete profile data (all information).
     
     Args:
-        profile_id: Profile identifier
-        db_session: SQLAlchemy database session
+        profile_id: Profile ID
+        db_session: Database session
         
     Returns:
-        Dictionary with basic profile info or None
+        Complete profile dictionary or None
     """
-    result = db_session.execute(
-        select(Profile).where(Profile.id == profile_id)
-    )
-    profile = result.scalar_one_or_none()
+    try:
+        basic_info = await get_profile_basic_info(profile_id, db_session)
+        
+        if not basic_info:
+            return None
+        
+        return {
+            "basic_info": basic_info,
+            "skills": await get_profile_skills(profile_id, db_session),
+            "experiences": await get_profile_experiences(profile_id, db_session),
+            "projects": await get_profile_projects(profile_id, db_session),
+        }
     
-    if not profile:
+    except Exception as e:
+        logger.error(f"Error fetching full profile: {e}")
         return None
-    
-    return {
-        "id": profile.id,
-        "name": profile.name,
-        "email": profile.email,
-        "location": profile.location,
-        "linkedin_url": profile.linkedin_url,
-        "github_username": profile.github_username,
-    }
-
-
-
-
-
-
-

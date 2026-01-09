@@ -30,7 +30,7 @@ from backend.agents.guardrail_agent import GuardrailAgent
 from backend.orchestrator.orchestrator import Orchestrator
 
 # API Routes
-from backend.api.routes import chat
+from backend.api.routes import chat, profile  # ← CHANGED: Added profile
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -156,6 +156,7 @@ def get_orchestrator() -> Orchestrator:
 # Register routes
 chat.set_orchestrator_dependency(get_orchestrator)
 app.include_router(chat.router)
+app.include_router(profile.router)  # ← ADDED: Profile router
 
 
 @app.get("/")
