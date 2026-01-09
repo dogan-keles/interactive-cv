@@ -52,6 +52,8 @@ async def get_profile_basic_info(
     
     except Exception as e:
         logger.error(f"Error fetching profile basic info: {e}")
+        if db_session:
+            db_session.rollback()
         return None
 
 
@@ -75,6 +77,8 @@ async def get_profile_summary(
     
     except Exception as e:
         logger.error(f"Error fetching profile summary: {e}")
+        if db_session:
+            db_session.rollback()
         return None
 
 
@@ -107,6 +111,8 @@ async def get_profile_skills(
     
     except Exception as e:
         logger.error(f"Error fetching skills: {e}")
+        if db_session:
+            db_session.rollback()
         return []
 
 
@@ -144,6 +150,8 @@ async def get_profile_experiences(
     
     except Exception as e:
         logger.error(f"Error fetching experiences: {e}")
+        if db_session:
+            db_session.rollback()
         return []
 
 
@@ -181,6 +189,8 @@ async def get_profile_projects(
     
     except Exception as e:
         logger.error(f"Error fetching projects: {e}")
+        if db_session:
+            db_session.rollback()
         return []
 
 
@@ -213,4 +223,6 @@ async def get_full_profile(
     
     except Exception as e:
         logger.error(f"Error fetching full profile: {e}")
+        if db_session:
+            db_session.rollback()
         return None
