@@ -1,129 +1,83 @@
 """
-Language detection for user input.
+LLM-based Language Detection.
 
-Lightweight, deterministic language detection executed before intent classification.
-Uses character-based heuristics for Turkish/English detection.
+The LLM automatically detects and responds in the user's language.
+No more hardcoded keyword matching or character detection.
+
+This approach:
+- Supports ALL languages (English, Turkish, Kurdish, Arabic, Chinese, etc.)
+- No maintenance needed for new languages
+- More accurate (LLM understands context)
+- Simpler codebase
 """
-
-import re
-from typing import Optional
 
 from .types import Language
 
 
-class LanguageDetector:
-    """
-    Detects language of user input using character-based heuristics.
-    
-    Turkish-specific characters: ç, ğ, ı, ö, ş, ü, Ç, Ğ, İ, Ö, Ş, Ü
-    English is the default fallback.
-    """
-    
-    # Turkish-specific characters (lowercase and uppercase)
-    TURKISH_CHARS = set("çğıöşüÇĞİÖŞÜ")
-    
-    # Common Turkish words (case-insensitive)
-    TURKISH_KEYWORDS = {
-        "ve", "ile", "için", "bu", "şu", "o", "bir", "var", "yok",
-        "nedir", "nasıl", "ne", "kim", "nerede", "ne zaman",
-        "hakkında", "ile ilgili", "projeler", "deneyim", "beceriler",
-        "cv", "özgeçmiş", "github", "proje", "teknoloji",
-    }
-    
-    def detect(self, text: str) -> Language:
-        """
-        Detect language of input text.
-        
-        Strategy:
-        1. Check for Turkish-specific characters
-        2. Check for common Turkish keywords
-        3. Default to English
-        
-        Args:
-            text: User input text
-            
-        Returns:
-            Detected language (Language enum)
-        """
-        if not text or not text.strip():
-            return Language.ENGLISH
-        
-        text_lower = text.lower()
-        
-        # Check for Turkish characters
-        has_turkish_chars = any(char in self.TURKISH_CHARS for char in text)
-        
-        # Check for Turkish keywords
-        turkish_keyword_count = sum(
-            1 for keyword in self.TURKISH_KEYWORDS
-            if keyword in text_lower
-        )
-        
-        # Heuristic: If Turkish chars present OR 2+ Turkish keywords, classify as Turkish
-        if has_turkish_chars or turkish_keyword_count >= 2:
-            return Language.TURKISH
-        
-        # Check for mixed content (Turkish chars but mostly English)
-        # If text is mostly English words but has some Turkish chars, still Turkish
-        if has_turkish_chars:
-            return Language.TURKISH
-        
-        # Default to English
-        return Language.ENGLISH
-    
-    def detect_with_confidence(
-        self,
-        text: str,
-    ) -> tuple[Language, float]:
-        """
-        Detect language with confidence score (0.0 to 1.0).
-        
-        Returns:
-            Tuple of (detected_language, confidence_score)
-        """
-        if not text or not text.strip():
-            return Language.ENGLISH, 0.5
-        
-        text_lower = text.lower()
-        
-        # Count Turkish indicators
-        turkish_char_count = sum(1 for char in text if char in self.TURKISH_CHARS)
-        turkish_keyword_count = sum(
-            1 for keyword in self.TURKISH_KEYWORDS
-            if keyword in text_lower
-        )
-        
-        # Calculate confidence
-        total_chars = len(text)
-        char_ratio = turkish_char_count / total_chars if total_chars > 0 else 0
-        keyword_ratio = min(turkish_keyword_count / 5.0, 1.0)  # Cap at 1.0
-        
-        # Combined confidence for Turkish
-        turkish_confidence = min((char_ratio * 0.7 + keyword_ratio * 0.3) * 2, 1.0)
-        
-        if turkish_confidence > 0.3:
-            return Language.TURKISH, turkish_confidence
-        
-        english_confidence = 1.0 - turkish_confidence
-        return Language.ENGLISH, english_confidence
-
-
-# Singleton instance
-_language_detector = LanguageDetector()
-
-
 def detect_language(text: str) -> Language:
     """
-    Convenience function for language detection.
+    Return AUTO mode - LLM will detect language dynamically.
+    
+    This function now simply returns Language.AUTO, indicating that
+    the LLM should detect and match the user's language automatically.
+    
+    The old keyword/character-based detection has been removed in favor
+    of letting the LLM handle this naturally through its prompt.
     
     Args:
-        text: User input text
+        text: User input text (not analyzed anymore)
         
     Returns:
-        Detected language
+        Language.AUTO (signals LLM-based detection)
     """
-    return _language_detector.detect(text)
+    return Language.AUTO
 
 
+def get_language_name(lang: Language) -> str:
+    """
+    Get human-readable language name.
+    
+    Args:
+        lang: Language enum value
+        
+    Returns:
+        Human-readable language name
+    """
+    names = {
+        Language.AUTO: "Auto-detected",
+        Language.ENGLISH: "English",
+        Language.TURKISH: "Turkish",
+        Language.KURDISH: "Kurdish",
+        Language.GERMAN: "German",
+        Language.FRENCH: "French",
+        Language.SPANISH: "Spanish",
+        Language.ITALIAN: "Italian",
+        Language.PORTUGUESE: "Portuguese",
+        Language.RUSSIAN: "Russian",
+        Language.ARABIC: "Arabic",
+        Language.CHINESE: "Chinese",
+        Language.JAPANESE: "Japanese",
+        Language.KOREAN: "Korean",
+    }
+    return names.get(lang, "Auto-detected")
 
 
+# Legacy class kept for backwards compatibility
+class LanguageDetector:
+    """
+    Legacy LanguageDetector class (deprecated).
+    
+    Kept for backwards compatibility. All methods now return Language.AUTO.
+    """
+    
+    def detect(self, text: str) -> Language:
+        """Return AUTO mode for LLM-based detection."""
+        return Language.AUTO
+    
+    def detect_with_confidence(self, text: str) -> tuple[Language, float]:
+        """Return AUTO mode with 100% confidence (LLM handles it)."""
+        return Language.AUTO, 1.0
+
+
+# Singleton instance (for backwards compatibility)
+_language_detector = LanguageDetector()

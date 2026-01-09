@@ -10,12 +10,27 @@ from typing import Optional
 
 
 class Language(str, Enum):
-    """Supported languages for user input and responses."""
+    """
+    Supported languages for user input and responses.
+    
+    Note: Language detection is now handled by the LLM automatically.
+    The LLM will detect and respond in ANY language the user uses.
+    These enum values are kept for backwards compatibility and internal tracking.
+    """
+    AUTO = "auto"  # LLM auto-detects and matches user's language
     ENGLISH = "en"
     TURKISH = "tr"
-    # Future languages can be added here
-    # SPANISH = "es"
-    # GERMAN = "de"
+    KURDISH = "ku"
+    GERMAN = "de"
+    FRENCH = "fr"
+    SPANISH = "es"
+    ITALIAN = "it"
+    PORTUGUESE = "pt"
+    RUSSIAN = "ru"
+    ARABIC = "ar"
+    CHINESE = "zh"
+    JAPANESE = "ja"
+    KOREAN = "ko"
 
 
 class Intent(str, Enum):
@@ -34,7 +49,7 @@ class RequestContext:
     
     Contains all metadata needed for request processing:
     - Original user query
-    - Detected language
+    - Detected language (AUTO for LLM-based detection)
     - Detected intent
     - Profile ID
     - Optional RAG context (retrieved via tools)
@@ -54,7 +69,3 @@ class RequestContext:
             "intent": self.intent.value,
             "rag_context": self.rag_context,
         }
-
-
-
-

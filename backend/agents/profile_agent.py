@@ -223,10 +223,14 @@ class ProfileAgent:
             "",
             PROFILE_AGENT_INSTRUCTIONS,
             "",
-            get_language_instruction(context.language),
+            "=" * 80,
+            "USER'S QUESTION (DETECT THE LANGUAGE FROM THIS):",
             "",
-            f"User Query: {context.user_query}",
-            f"Profile ID: {context.profile_id}",
+            f'"{context.user_query}"',
+            "",
+            "=" * 80,
+            "",
+            "⚠️  YOU MUST RESPOND IN THE SAME LANGUAGE AS THE QUESTION ABOVE ⚠️",
             "",
         ]
         
@@ -234,62 +238,78 @@ class ProfileAgent:
         has_data = any(profile_data.values()) if profile_data else False
         
         if has_data:
-            prompt_parts.append("Profile Data:")
-            prompt_parts.append("=" * 50)
+            prompt_parts.append("PROFILE DATA:")
+            prompt_parts.append("━" * 80)
             
             if "basic_info" in profile_data and profile_data["basic_info"]:
                 info = profile_data["basic_info"]
                 prompt_parts.append(f"Name: {info.get('name', 'N/A')}")
-                prompt_parts.append(f"Email: {info.get('email', 'N/A')}")
-                prompt_parts.append(f"Location: {info.get('location', 'N/A')}")
+                if info.get('email'):
+                    prompt_parts.append(f"Email: {info['email']}")
+                if info.get('location'):
+                    prompt_parts.append(f"Location: {info['location']}")
                 if info.get('linkedin_url'):
                     prompt_parts.append(f"LinkedIn: {info['linkedin_url']}")
                 if info.get('github_username'):
                     prompt_parts.append(f"GitHub: {info['github_username']}")
+                prompt_parts.append("")
             
             if "summary" in profile_data and profile_data["summary"]:
-                prompt_parts.append(f"\nSummary: {profile_data['summary']}")
+                prompt_parts.append("SUMMARY:")
+                prompt_parts.append(profile_data['summary'])
+                prompt_parts.append("")
             
             if "skills" in profile_data and profile_data["skills"]:
-                skills_text = ", ".join([
-                    f"{s['name']} ({s.get('proficiency_level', 'N/A')})" 
-                    for s in profile_data["skills"]
-                ])
-                prompt_parts.append(f"\nSkills: {skills_text}")
+                prompt_parts.append("SKILLS:")
+                for skill in profile_data["skills"]:
+                    level = skill.get('proficiency_level', 'N/A')
+                    category = skill.get('category', 'N/A')
+                    prompt_parts.append(f"  • {skill['name']} - {level} ({category})")
+                prompt_parts.append("")
             
             if "experiences" in profile_data and profile_data["experiences"]:
-                prompt_parts.append("\nExperiences:")
+                prompt_parts.append("WORK EXPERIENCE:")
                 for exp in profile_data["experiences"]:
-                    prompt_parts.append(
-                        f"- {exp['role']} at {exp['company']} "
-                        f"({exp.get('start_date', 'N/A')} - {exp.get('end_date', 'Present')})"
-                    )
+                    prompt_parts.append(f"  • {exp['role']} at {exp['company']}")
+                    prompt_parts.append(f"    {exp.get('start_date', 'N/A')} - {exp.get('end_date', 'Present')}")
                     if exp.get('description'):
-                        prompt_parts.append(f"  {exp['description']}")
+                        prompt_parts.append(f"    {exp['description']}")
+                    if exp.get('location'):
+                        prompt_parts.append(f"    Location: {exp['location']}")
+                    prompt_parts.append("")
             
             if "projects" in profile_data and profile_data["projects"]:
-                prompt_parts.append("\nProjects:")
+                prompt_parts.append("PROJECTS:")
                 for proj in profile_data["projects"]:
-                    prompt_parts.append(f"- {proj['title']}")
+                    prompt_parts.append(f"  • {proj['title']}")
                     if proj.get('description'):
-                        prompt_parts.append(f"  {proj['description']}")
+                        prompt_parts.append(f"    {proj['description']}")
                     if proj.get('tech_stack'):
                         tech = ', '.join(proj['tech_stack']) if isinstance(proj['tech_stack'], list) else proj['tech_stack']
-                        prompt_parts.append(f"  Tech: {tech}")
+                        prompt_parts.append(f"    Technologies: {tech}")
+                    if proj.get('github_url'):
+                        prompt_parts.append(f"    GitHub: {proj['github_url']}")
+                    prompt_parts.append("")
             
+            prompt_parts.append("━" * 80)
             prompt_parts.append("")
         else:
             # No data available
-            prompt_parts.append("⚠️ No profile data found in database.")
-            prompt_parts.append("Please inform the user politely that the profile information is not yet available.")
+            prompt_parts.append("⚠️  NO PROFILE DATA AVAILABLE IN DATABASE")
+            prompt_parts.append("Inform the user politely that profile information is not yet available.")
             prompt_parts.append("")
         
         if rag_context:
-            prompt_parts.append("Additional Context (from semantic search):")
-            prompt_parts.append("=" * 50)
+            prompt_parts.append("ADDITIONAL CONTEXT (from semantic search):")
+            prompt_parts.append("━" * 80)
             prompt_parts.append(rag_context)
+            prompt_parts.append("━" * 80)
             prompt_parts.append("")
         
-        prompt_parts.append("Please provide a clear, natural response to the user's question based on the information above.")
+        prompt_parts.append("NOW PROVIDE YOUR ANSWER:")
+        prompt_parts.append("━" * 80)
+        prompt_parts.append("⚠️  FINAL REMINDER: Use the SAME LANGUAGE as the user's question!")
+        prompt_parts.append("Be professional, accurate, concise, and helpful.")
+        prompt_parts.append("")
         
         return "\n".join(prompt_parts)
