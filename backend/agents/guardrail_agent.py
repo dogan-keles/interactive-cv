@@ -1,18 +1,18 @@
 """
-Guardrail Agent implementation.
+Guardrail Agent implementation - OPTIMIZED VERSION
 
-Enforces system boundaries and handles out-of-scope requests.
-Uses LLM only, no tools or database access.
+Validates responses and handles out-of-scope requests.
+Acts as a safety layer without being overly restrictive.
 """
 
 import logging
+from typing import Optional
 
 from backend.infrastructure.llm.provider import BaseLLMProvider
-from backend.orchestrator.types import RequestContext
+from backend.orchestrator.types import RequestContext, Intent, Language
 from backend.agents.prompts import (
     GUARDRAIL_AGENT_SYSTEM_PROMPT,
     GUARDRAIL_AGENT_INSTRUCTIONS,
-    get_language_instruction,
 )
 
 logger = logging.getLogger(__name__)
@@ -20,10 +20,18 @@ logger = logging.getLogger(__name__)
 
 class GuardrailAgent:
     """
-    Agent for enforcing system boundaries and handling out-of-scope requests.
+    Agent for validating responses and handling edge cases.
     
-    Validates responses and handles requests that fall outside system scope.
-    Uses LLM only, no tools or database access.
+    Responsibilities:
+    - Validate that responses are appropriate and on-topic
+    - Handle out-of-scope requests politely
+    - Prevent hallucinations and off-topic responses
+    - Maintain professional tone
+    
+    NOT responsible for:
+    - Blocking valid profile/GitHub/CV questions
+    - Being overly restrictive
+    - Rewriting good responses
     """
     
     def __init__(self, llm_provider: BaseLLMProvider):
@@ -41,102 +49,198 @@ class GuardrailAgent:
         context: RequestContext,
     ) -> str:
         """
-        Check and validate an agent response.
+        Check if a response is appropriate and on-topic.
         
-        Ensures response is safe, appropriate, and within system boundaries.
-        If response is invalid, returns a corrected version.
+        This is a LIGHT validation - only blocks clearly problematic responses.
+        Most responses should pass through unchanged.
         
         Args:
-            response: Agent-generated response to validate
-            context: Request context
+            response: Agent's response to validate
+            context: Original request context
             
         Returns:
-            Validated or corrected response
+            Original response if valid, or modified response if issues found
         """
-        try:
-            prompt = self._build_check_prompt(response, context)
-            
-            validated_response = await self.llm_provider.generate(
-                prompt=prompt,
-                temperature=0.3,
-                max_tokens=200,
-            )
-            
-            return validated_response.strip()
-        
-        except Exception as e:
-            logger.error(f"GuardrailAgent check_response error: {e}", exc_info=True)
+        # Skip validation for very short responses (likely errors already)
+        if len(response) < 20:
             return response
+        
+        # Quick heuristic checks (no LLM call needed)
+        if self._is_clearly_valid(response, context):
+            logger.debug("Response passed quick validation")
+            return response
+        
+        # Only use LLM validation if response seems suspicious
+        if self._seems_suspicious(response):
+            logger.info("Response flagged for LLM validation")
+            return await self._validate_with_llm(response, context)
+        
+        # Default: pass through
+        return response
     
-    async def handle_out_of_scope(
-        self,
-        context: RequestContext,
-    ) -> str:
+    def _is_clearly_valid(self, response: str, context: RequestContext) -> bool:
         """
-        Handle out-of-scope or unsupported requests.
+        Quick checks for obviously valid responses.
         
-        Generates a polite refusal or redirection message.
-        
-        Args:
-            context: Request context with user query
-            
-        Returns:
-            Polite refusal or redirection message
+        Returns True if response is clearly appropriate (skip LLM validation).
         """
-        try:
-            prompt = self._build_out_of_scope_prompt(context)
-            
-            response = await self.llm_provider.generate(
-                prompt=prompt,
-                temperature=0.5,
-                max_tokens=150,
-            )
-            
-            return response.strip()
+        response_lower = response.lower()
         
-        except Exception as e:
-            logger.error(f"GuardrailAgent handle_out_of_scope error: {e}", exc_info=True)
-            if context.language.value == "tr":
-                return "Üzgünüm, bu isteği yerine getiremiyorum. Lütfen adayın profesyonel geçmişi, GitHub projeleri veya CV oluşturma hakkında sorun."
-            return "I'm sorry, I cannot fulfill this request. Please ask about the candidate's professional background, GitHub projects, or CV generation."
+        # Valid if response contains relevant keywords based on intent
+        if context.intent == Intent.PROFILE_INFO:
+            valid_keywords = [
+                "skill", "experience", "technology", "project", "background",
+                "yetenek", "deneyim", "teknoloji", "proje", "geçmiş",
+                "jêhatî", "zanîn", "pispor", "kar",
+                "python", "javascript", "fastapi", "react"  # Tech keywords
+            ]
+            if any(keyword in response_lower for keyword in valid_keywords):
+                return True
+        
+        elif context.intent == Intent.GITHUB_INFO:
+            valid_keywords = [
+                "repository", "repo", "github", "project", "code",
+                "depo", "proje", "kod"
+            ]
+            if any(keyword in response_lower for keyword in valid_keywords):
+                return True
+        
+        elif context.intent == Intent.CV_REQUEST:
+            valid_keywords = [
+                "cv", "resume", "download", "generate",
+                "özgeçmiş", "indir"
+            ]
+            if any(keyword in response_lower for keyword in valid_keywords):
+                return True
+        
+        # Valid if response is informative (has substantial content)
+        if len(response) > 100:  # Substantial response
+            return True
+        
+        return False
     
-    def _build_check_prompt(
+    def _seems_suspicious(self, response: str) -> bool:
+        """
+        Check if response seems suspicious and needs validation.
+        
+        Returns True if response should be validated by LLM.
+        """
+        response_lower = response.lower()
+        
+        # Suspicious patterns
+        suspicious_patterns = [
+            "i cannot", "i can't", "i'm not able", "i'm unable",
+            "out of scope", "not allowed", "cannot help",
+            "redirect", "contact", "speak with",
+            "yapamazım", "yapamam", "iznim yok",
+            "kapsam dışı", "yetkim yok",
+            "nikare", "nasiheyê"
+        ]
+        
+        # If response contains multiple suspicious patterns, validate
+        suspicious_count = sum(1 for pattern in suspicious_patterns if pattern in response_lower)
+        
+        return suspicious_count >= 2  # Only flag if multiple red flags
+    
+    async def _validate_with_llm(
         self,
         response: str,
         context: RequestContext,
     ) -> str:
-        """Build prompt for response validation."""
-        prompt_parts = [
-            GUARDRAIL_AGENT_SYSTEM_PROMPT,
-            "",
-            "Validate the following agent response. If it is safe, appropriate, and within system boundaries, return it as-is. If it violates boundaries, contains unsafe content, or goes off-topic, return a corrected version (max 4 sentences).",
-            "",
-            get_language_instruction(context.language),
-            "",
-            f"Original User Query: {context.user_query}",
-            f"Agent Response to Validate: {response}",
-            "",
-            "Return the validated or corrected response:",
-        ]
-        return "\n".join(prompt_parts)
+        """
+        Use LLM to validate response (only called for suspicious responses).
+        
+        Args:
+            response: Response to validate
+            context: Request context
+            
+        Returns:
+            Validated or modified response
+        """
+        validation_prompt = f"""You are a guardrail validator. Check if this response is appropriate.
+
+USER QUESTION: {context.user_query}
+INTENT: {context.intent.value}
+
+AGENT RESPONSE:
+{response}
+
+TASK: Is this response appropriate and on-topic?
+
+Guidelines:
+- If the response answers the question about profile/skills/experience → APPROVE
+- If the response provides helpful CV-related information → APPROVE
+- If the response is overly restrictive or refuses valid requests → REJECT
+- If the response is completely off-topic → REJECT
+- If the response hallucinates or makes things up → REJECT
+
+Respond ONLY with:
+- "APPROVE" if the response is good
+- "REJECT: [brief reason]" if it should be blocked
+
+Your response:"""
+        
+        try:
+            validation = await self.llm_provider.generate(
+                prompt=validation_prompt,
+                temperature=0.3,
+                max_tokens=100,
+            )
+            
+            if validation.strip().startswith("APPROVE"):
+                logger.info("Response approved by guardrail validation")
+                return response
+            else:
+                logger.warning(f"Response rejected by guardrail: {validation}")
+                # Return a generic safe response
+                return await self.handle_out_of_scope(context)
+        
+        except Exception as e:
+            logger.error(f"Guardrail validation error: {e}")
+            # On error, pass through the original response
+            return response
     
-    def _build_out_of_scope_prompt(
-        self,
-        context: RequestContext,
-    ) -> str:
-        """Build prompt for out-of-scope request handling."""
-        prompt_parts = [
-            GUARDRAIL_AGENT_SYSTEM_PROMPT,
-            "",
-            GUARDRAIL_AGENT_INSTRUCTIONS,
-            "",
-            get_language_instruction(context.language),
-            "",
-            f"User Query: {context.user_query}",
-            "",
-            "Generate a response following the instructions above (max 4 sentences):",
-        ]
-        return "\n".join(prompt_parts)
+    async def handle_out_of_scope(self, context: RequestContext) -> str:
+        """
+        Handle out-of-scope requests politely.
+        
+        Args:
+            context: Request context
+            
+        Returns:
+            Polite redirect message in the user's language
+        """
+        prompt = f"""{GUARDRAIL_AGENT_SYSTEM_PROMPT}
 
+{GUARDRAIL_AGENT_INSTRUCTIONS}
 
+USER QUESTION: {context.user_query}
+DETECTED LANGUAGE: {context.language.value}
 
+This request is out of scope. Provide a polite response that:
+1. Explains this system only handles profile/CV/GitHub questions
+2. Suggests what the user CAN ask about instead
+3. Is brief (2-3 sentences max)
+4. Is in the SAME language as the user's question
+
+⚠️  CRITICAL: Respond in the SAME language as the user's question!
+
+Your response:"""
+        
+        try:
+            response = await self.llm_provider.generate(
+                prompt=prompt,
+                temperature=0.7,
+                max_tokens=200,
+            )
+            return response.strip()
+        
+        except Exception as e:
+            logger.error(f"GuardrailAgent error: {e}")
+            # Fallback message in appropriate language
+            if context.language == Language.TURKISH:
+                return "Üzgünüm, bu soru kapsam dışında. Adayın yetenekleri, deneyimi veya projeleri hakkında soru sorabilirsiniz."
+            elif context.language == Language.KURDISH:
+                return "Bibore, ev pirs di derveyî kar e. Tu dikarî li ser jêhatî, ezmûn an jî projeyên namzedî bipirsî."
+            else:
+                return "I'm sorry, this question is out of scope. You can ask about the candidate's skills, experience, or projects."

@@ -87,7 +87,8 @@ class Orchestrator:
         2. Detect intent
         3. Create request context
         4. Route to appropriate agent
-        5. Return response (in detected language)
+        5. Apply guardrail check
+        6. Return response (in detected language)
         
         Args:
             user_query: User's input text
@@ -113,16 +114,13 @@ class Orchestrator:
         # Step 4: Route to appropriate agent
         response = await self._route_to_agent(context)
         
-        # Step 5: Apply guardrail check (TEMPORARILY DISABLED FOR TESTING)
-        # TODO: Re-enable after fixing GuardrailAgent being too aggressive
-        # final_response = await self.guardrail_agent.check_response(
-        #     response=response,
-        #     context=context,
-        # )
-        # return final_response
+        # Step 5: Apply guardrail check (RE-ENABLED - light validation)
+        final_response = await self.guardrail_agent.check_response(
+            response=response,
+            context=context,
+        )
         
-        # Return response directly without guardrail filtering
-        return response
+        return final_response
     
     async def _route_to_agent(
         self,
@@ -194,13 +192,10 @@ class Orchestrator:
         # Route to agent
         response = await self._route_to_agent(context)
         
-        # Apply guardrail (TEMPORARILY DISABLED FOR TESTING)
-        # TODO: Re-enable after fixing GuardrailAgent
-        # final_response = await self.guardrail_agent.check_response(
-        #     response=response,
-        #     context=context,
-        # )
-        # return final_response
+        # Apply guardrail (RE-ENABLED - light validation)
+        final_response = await self.guardrail_agent.check_response(
+            response=response,
+            context=context,
+        )
         
-        # Return response directly
-        return response
+        return final_response
