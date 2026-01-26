@@ -14,7 +14,7 @@ load_dotenv()
 
 from backend.infrastructure.database import SessionLocal, check_connection
 from backend.data_access.vector_db.pgvector_store import PgVectorStore
-from backend.data_access.vector_db.sentence_transformer_embedding import SentenceTransformerEmbedding
+from backend.data_access.vector_db.sklearn_embedding import SklearnTfidfEmbedding
 from backend.data_access.vector_db.ingestion import DocumentIngestion
 
 logging.basicConfig(level=logging.INFO)
@@ -41,9 +41,9 @@ async def main():
     
     try:
         # 3. Initialize embedding provider
-        logger.info("📥 Loading embedding model (all-MiniLM-L6-v2)...")
-        embedding_provider = SentenceTransformerEmbedding()
-        logger.info(f"✅ Embedding model loaded (dimension: {embedding_provider.get_dimension()})")
+        logger.info("📥 Loading TF-IDF embedding provider...")
+        embedding_provider = SklearnTfidfEmbedding(max_features=384)
+        logger.info(f"✅ TF-IDF provider loaded (dimension: {embedding_provider.get_dimension()})")
         
         # 4. Initialize vector store
         vector_store = PgVectorStore(

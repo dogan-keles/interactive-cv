@@ -80,14 +80,14 @@ async def lifespan(app: FastAPI):
     if _db_session:
         try:
             from backend.data_access.vector_db.pgvector_store import PgVectorStore
-            from backend.data_access.vector_db.sentence_transformer_embedding import (
-                SentenceTransformerEmbedding,
-            )
+            from backend.data_access.vector_db.sklearn_embedding import SklearnTfidfEmbedding
             from backend.data_access.vector_db.retrieval import RAGRetrievalPipeline
-
+            
             logger.info("📥 Initializing RAG components...")
-
-            embedding_provider = SentenceTransformerEmbedding()
+            
+            # Initialize embedding provider (lightweight TF-IDF)
+            embedding_provider = SklearnTfidfEmbedding(max_features=384)
+            logger.info(f"✅ Embedding provider initialized (dimension: {embedding_provider.get_dimension()})")
 
             vector_store = PgVectorStore(
                 db_session=_db_session,
@@ -199,6 +199,7 @@ async def health():
         "mode": "production" if _db_session else "no-database",
     }
 
+
 @app.post("/admin/ingest-vectors")
 async def ingest_vectors_endpoint():
     """
@@ -207,7 +208,7 @@ async def ingest_vectors_endpoint():
     """
     try:
         from backend.data_access.vector_db.pgvector_store import PgVectorStore
-        from backend.data_access.vector_db.sentence_transformer_embedding import SentenceTransformerEmbedding
+        from backend.data_access.vector_db.sklearn_embedding import SklearnTfidfEmbedding
         from backend.data_access.vector_db.ingestion import DocumentIngestion
         
         if not _db_session:
@@ -218,8 +219,8 @@ async def ingest_vectors_endpoint():
         
         logger.info("Starting vector ingestion via admin endpoint...")
         
-        # Initialize embedding provider
-        embedding_provider = SentenceTransformerEmbedding()
+        # Initialize embedding provider (lightweight TF-IDF)
+        embedding_provider = SklearnTfidfEmbedding(max_features=384)
         logger.info("Embedding provider initialized")
         
         # Initialize vector store
@@ -257,4 +258,3 @@ async def ingest_vectors_endpoint():
             "success": False,
             "error": str(e)
         }
-    
