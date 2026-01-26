@@ -1,24 +1,19 @@
 """
-Vector database module for RAG pipeline.
+Vector database module for RAG (Retrieval-Augmented Generation).
 
-Exports:
-- VectorStore: Abstract interface for vector storage
-- EmbeddingProvider: Abstract interface for embeddings
-- RAGIngestionPipeline: Ingestion pipeline
-- RAGRetrievalPipeline: Retrieval pipeline
-- SourceType: Enum for source types
+Provides vector storage, embedding generation, and semantic search capabilities.
 """
 
-from .ingestion import ChunkingConfig, RAGIngestionPipeline
-from .retrieval import RAGRetrievalPipeline
 from .vector_store import (
-    ChunkMetadata,
-    EmbeddingProvider,
-    RetrievedChunk,
-    SourceType,
-    VectorChunk,
     VectorStore,
+    EmbeddingProvider,
+    VectorChunk,
+    RetrievedChunk,
+    ChunkMetadata,
+    SourceType,
 )
+from .ingestion import DocumentIngestion
+from .retrieval import RAGRetrievalPipeline
 
 __all__ = [
     "VectorStore",
@@ -27,11 +22,6 @@ __all__ = [
     "RetrievedChunk",
     "ChunkMetadata",
     "SourceType",
-    "RAGIngestionPipeline",
+    "DocumentIngestion",
     "RAGRetrievalPipeline",
-    "ChunkingConfig",
 ]
-
-
-
-

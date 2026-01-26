@@ -8,11 +8,11 @@ import logging
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
-# Load environment variables first
-load_dotenv()
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+# Load env vars
+load_dotenv()
 
 # Database
 from backend.infrastructure.database import SessionLocal, check_connection
@@ -29,98 +29,125 @@ from backend.agents.guardrail_agent import GuardrailAgent
 # Orchestrator
 from backend.orchestrator.orchestrator import Orchestrator
 
-# API Routes
-from backend.api.routes import chat, profile  # ← CHANGED: Added profile
+# Routes
+from backend.api.routes import chat, profile
 
-# Configure logging
+
+# -------------------------------------------------------------------
+# Logging
+# -------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Global instances
+
+# -------------------------------------------------------------------
+# Globals
+# -------------------------------------------------------------------
 _orchestrator: Orchestrator | None = None
 _db_session = None
 
 
+# -------------------------------------------------------------------
+# Lifespan
+# -------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Application lifespan: startup and shutdown logic.
-    
-    Startup:
-    - Check database connection
-    - Create database session
-    - Initialize LLM provider
-    - Create agents with real database sessions
-    - Initialize orchestrator
-    
-    Shutdown:
-    - Close database session
-    """
     global _orchestrator, _db_session
 
     logger.info("🚀 Initializing application...")
 
-    # 1. Check database connection
+    # 1. Database
     if check_connection():
         logger.info("✅ Database connected (Neon DB)")
         _db_session = SessionLocal()
     else:
-        logger.warning("⚠️  Database connection failed - running without DB")
+        logger.warning("⚠️ Database connection failed - running without DB")
         _db_session = None
 
-    # 2. Initialize LLM Provider (Groq)
+    # 2. LLM Provider
     groq_api_key = os.getenv("GROQ_API_KEY")
     if not groq_api_key:
-        logger.error("❌ GROQ_API_KEY not found in environment variables!")
-        raise ValueError("GROQ_API_KEY is required")
-    
+        raise RuntimeError("❌ GROQ_API_KEY is required")
+
     llm_provider = GroqProvider(
         api_key=groq_api_key,
         model=os.getenv("LLM_MODEL", "llama-3.3-70b-versatile"),
     )
     logger.info("✅ Groq LLM provider initialized")
 
-    # 3. Create agents with database sessions
+    # 3. RAG (optional)
+    retrieval_pipeline = None
+    if _db_session:
+        try:
+            from backend.data_access.vector_db.pgvector_store import PgVectorStore
+            from backend.data_access.vector_db.sentence_transformer_embedding import (
+                SentenceTransformerEmbedding,
+            )
+            from backend.data_access.vector_db.retrieval import RAGRetrievalPipeline
+
+            logger.info("📥 Initializing RAG components...")
+
+            embedding_provider = SentenceTransformerEmbedding()
+
+            vector_store = PgVectorStore(
+                db_session=_db_session,
+                embedding_provider=embedding_provider,
+            )
+
+            retrieval_pipeline = RAGRetrievalPipeline(
+                vector_store=vector_store,
+                embedding_provider=embedding_provider,
+            )
+
+            logger.info("✅ RAG retrieval pipeline initialized")
+
+        except Exception as e:
+            logger.warning(f"⚠️ RAG initialization failed: {e}")
+            retrieval_pipeline = None
+
+    # 4. Agents
     profile_agent = ProfileAgent(
         llm_provider=llm_provider,
         db_session=_db_session,
+        retrieval_pipeline=retrieval_pipeline,
     )
-    
+
     github_agent = GitHubAgent(
         llm_provider=llm_provider,
         db_session=_db_session,
     )
-    
+
     cv_agent = CVAgent(
         llm_provider=llm_provider,
         db_session=_db_session,
     )
-    
+
     guardrail_agent = GuardrailAgent(llm_provider)
-    
+
     logger.info("✅ Agents initialized")
 
-    # 4. Create orchestrator
+    # 5. Orchestrator
     _orchestrator = Orchestrator(
         profile_agent=profile_agent,
         github_agent=github_agent,
         cv_agent=cv_agent,
         guardrail_agent=guardrail_agent,
     )
-    
-    logger.info("✅ Orchestrator initialized")
-    logger.info("🎉 Application startup complete!")
-    
+
+    logger.info("🎉 Application startup complete")
+
     yield
-    
-    # Shutdown: cleanup resources
+
+    # Shutdown
     logger.info("🛑 Shutting down application...")
     if _db_session:
         _db_session.close()
         logger.info("✅ Database session closed")
 
 
-# Create FastAPI app
+# -------------------------------------------------------------------
+# FastAPI App
+# -------------------------------------------------------------------
 app = FastAPI(
     title="Interactive CV API",
     description="AI-powered interactive CV with multi-agent architecture",
@@ -128,40 +155,34 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific origins
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
+# -------------------------------------------------------------------
+# Dependencies
+# -------------------------------------------------------------------
 def get_orchestrator() -> Orchestrator:
-    """
-    Dependency injection: Get orchestrator instance.
-    
-    Returns:
-        Orchestrator instance
-        
-    Raises:
-        RuntimeError: If orchestrator not initialized
-    """
     if _orchestrator is None:
         raise RuntimeError("Orchestrator not initialized")
     return _orchestrator
 
 
-# Register routes
+# -------------------------------------------------------------------
+# Routes
+# -------------------------------------------------------------------
 chat.set_orchestrator_dependency(get_orchestrator)
 app.include_router(chat.router)
-app.include_router(profile.router)  # ← ADDED: Profile router
+app.include_router(profile.router)
 
 
 @app.get("/")
 def root():
-    """Root endpoint - API status."""
     return {
         "message": "Interactive CV API is running 🚀",
         "version": "1.0.0",
@@ -171,19 +192,9 @@ def root():
 
 @app.get("/health")
 async def health():
-    """
-    Health check endpoint.
-    
-    Returns service status including:
-    - Overall health status
-    - LLM provider status
-    - Database connection status
-    """
-    db_status = "connected" if check_connection() else "disconnected"
-    
     return {
         "status": "healthy",
         "llm_provider": "groq",
-        "database": db_status,
+        "database": "connected" if check_connection() else "disconnected",
         "mode": "production" if _db_session else "no-database",
     }

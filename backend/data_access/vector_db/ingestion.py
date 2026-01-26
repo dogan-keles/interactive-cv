@@ -1,253 +1,207 @@
 """
-RAG ingestion pipeline.
+Document ingestion for RAG pipeline.
 
-Converts structured and unstructured data into chunked, embedded vectors
-for storage in the vector database.
+Chunks and embeds profile data for semantic search.
 """
 
-from typing import List, Optional
+import logging
+from typing import List
+from sqlalchemy.orm import Session
 
-from .vector_store import (
-    ChunkMetadata,
-    EmbeddingProvider,
-    SourceType,
-    VectorChunk,
+from backend.data_access.vector_db.vector_store import (
     VectorStore,
+    VectorChunk,
+    ChunkMetadata,
+    SourceType,
+    EmbeddingProvider,
+)
+from backend.data_access.knowledge_base.postgres import (
+    Profile,
+    Skill,
+    Experience,
+    Project,
 )
 
-
-# ============================================================================
-# Chunking Configuration and Utilities
-# ============================================================================
-
-class ChunkingConfig:
-    """Configuration for text chunking strategy."""
-    
-    def __init__(self, chunk_size: int = 500, chunk_overlap: int = 50):
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
+logger = logging.getLogger(__name__)
 
 
-def chunk_text(text: str, config: ChunkingConfig) -> List[str]:
-    """Split text into overlapping chunks."""
-    if not text or len(text) <= config.chunk_size:
-        return [text] if text else []
-    
-    chunks = []
-    start = 0
-    
-    while start < len(text):
-        end = start + config.chunk_size
-        chunks.append(text[start:end])
-        
-        if end >= len(text):
-            break
-            
-        start = end - config.chunk_overlap
-    
-    return chunks
-
-
-# ============================================================================
-# Data Formatters
-# ============================================================================
-
-def _format_dict(data: dict, fields: dict) -> str:
+class DocumentIngestion:
     """
-    Generic formatter for dict data.
-    
-    Args:
-        data: Source dictionary
-        fields: Mapping of {label: key} for formatting
-    
-    Returns:
-        Formatted string
-    """
-    parts = []
-    for label, key in fields.items():
-        value = data.get(key)
-        if value:
-            if isinstance(value, list):
-                value = ', '.join(str(v) for v in value)
-            parts.append(f"{label}: {value}")
-    return "\n".join(parts)
-
-
-def _format_experience(exp: dict) -> str:
-    """Format experience dict into searchable text."""
-    return _format_dict(exp, {
-        "Role": "role",
-        "Company": "company",
-        "Description": "description"
-    })
-
-
-def _format_project(project: dict) -> str:
-    """Format project dict into searchable text."""
-    return _format_dict(project, {
-        "Project": "title",
-        "Description": "description",
-        "Technologies": "tech_stack"
-    })
-
-
-def _format_skills(skills: List[dict]) -> str:
-    """Format skills list into searchable text."""
-    return "\n".join(
-        f"{s.get('name', '')} ({s.get('category', '')}) - {s.get('proficiency_level', '')}"
-        for s in skills
-    )
-
-
-# ============================================================================
-# RAG Ingestion Pipeline
-# ============================================================================
-
-class RAGIngestionPipeline:
-    """
-    Ingestion pipeline for converting data sources into vector chunks.
-    
-    Handles both structured (PostgreSQL) and unstructured (documents) data.
+    Handles ingestion of profile data into vector store.
     """
     
     def __init__(
         self,
         vector_store: VectorStore,
         embedding_provider: EmbeddingProvider,
-        chunking_config: Optional[ChunkingConfig] = None,
     ):
+        """
+        Initialize document ingestion.
+        
+        Args:
+            vector_store: Vector store for saving embeddings
+            embedding_provider: Provider for generating embeddings
+        """
         self.vector_store = vector_store
         self.embedding_provider = embedding_provider
-        self.chunking_config = chunking_config or ChunkingConfig()
     
-    async def _create_chunks(
+    async def ingest_profile(
+        self,
+        profile_id: int,
+        db_session: Session,
+    ) -> int:
+        """
+        Ingest complete profile data into vector store.
+        
+        Args:
+            profile_id: Profile ID to ingest
+            db_session: Database session
+            
+        Returns:
+            Number of chunks created
+        """
+        logger.info(f"Starting ingestion for profile {profile_id}")
+        
+        # Delete existing chunks for this profile (idempotent)
+        await self.vector_store.delete_profile_chunks(profile_id)
+        
+        # Fetch profile data
+        profile = db_session.query(Profile).filter(Profile.id == profile_id).first()
+        if not profile:
+            logger.warning(f"Profile {profile_id} not found")
+            return 0
+        
+        all_chunks = []
+        
+        # 1. Ingest summary
+        if profile.summary:
+            chunks = await self._chunk_and_embed_text(
+                text=profile.summary,
+                profile_id=profile_id,
+                source_type=SourceType.SUMMARY,
+            )
+            all_chunks.extend(chunks)
+        
+        # 2. Ingest skills
+        skills = db_session.query(Skill).filter(Skill.profile_id == profile_id).all()
+        for skill in skills:
+            text = f"{skill.name} ({skill.category}, {skill.proficiency_level})"
+            chunks = await self._chunk_and_embed_text(
+                text=text,
+                profile_id=profile_id,
+                source_type=SourceType.SKILL,
+                source_id=skill.id,
+            )
+            all_chunks.extend(chunks)
+        
+        # 3. Ingest experiences
+        experiences = db_session.query(Experience).filter(Experience.profile_id == profile_id).all()
+        for exp in experiences:
+            text = f"{exp.role} at {exp.company}. {exp.description or ''}"
+            chunks = await self._chunk_and_embed_text(
+                text=text,
+                profile_id=profile_id,
+                source_type=SourceType.EXPERIENCE,
+                source_id=exp.id,
+            )
+            all_chunks.extend(chunks)
+        
+        # 4. Ingest projects
+        projects = db_session.query(Project).filter(Project.profile_id == profile_id).all()
+        for proj in projects:
+            tech_stack = ', '.join(proj.tech_stack) if proj.tech_stack else ''
+            text = f"{proj.title}. {proj.description or ''}. Technologies: {tech_stack}"
+            chunks = await self._chunk_and_embed_text(
+                text=text,
+                profile_id=profile_id,
+                source_type=SourceType.PROJECT,
+                source_id=proj.id,
+            )
+            all_chunks.extend(chunks)
+        
+        # Store all chunks
+        if all_chunks:
+            await self.vector_store.upsert_chunks(all_chunks, profile_id)
+        
+        logger.info(f"Ingestion complete. Created {len(all_chunks)} chunks for profile {profile_id}")
+        return len(all_chunks)
+    
+    async def _chunk_and_embed_text(
         self,
         text: str,
         profile_id: int,
         source_type: SourceType,
-        source_id: Optional[int] = None,
-        use_batch: bool = True,
+        source_id: int = None,
     ) -> List[VectorChunk]:
-        """Create vector chunks from text with embeddings."""
-        text_chunks = chunk_text(text, self.chunking_config)
-        if not text_chunks:
-            return []
+        """
+        Chunk text and generate embeddings.
         
-        # Generate embeddings (batch or individual)
-        if use_batch and len(text_chunks) > 1:
-            embeddings = await self.embedding_provider.generate_embeddings_batch(text_chunks)
-        else:
-            embeddings = [
-                await self.embedding_provider.generate_embedding(chunk)
-                for chunk in text_chunks
-            ]
+        Args:
+            text: Text to chunk and embed
+            profile_id: Profile ID
+            source_type: Type of source document
+            source_id: Optional source document ID
+            
+        Returns:
+            List of vector chunks with embeddings
+        """
+        # Simple chunking strategy: Split on sentences if text is long
+        chunks_text = self._chunk_text(text, max_chunk_size=500)
         
-        # Create vector chunks with metadata
-        return [
-            VectorChunk(
-                text=chunk_text,
-                embedding=embedding,
-                metadata=ChunkMetadata(
-                    profile_id=profile_id,
-                    source_type=source_type,
-                    source_id=source_id,
-                    chunk_index=idx,
-                )
-            )
-            for idx, (chunk_text, embedding) in enumerate(zip(text_chunks, embeddings))
-        ]
-    
-    async def _ingest_items(
-        self,
-        items: List[dict],
-        profile_id: int,
-        source_type: SourceType,
-        formatter,
-    ) -> List[VectorChunk]:
-        """Generic method to ingest list of items."""
-        chunks = []
-        for item in items:
-            text = formatter(item)
-            item_chunks = await self._create_chunks(
-                text=text,
+        # Generate embeddings for all chunks
+        embeddings = await self.embedding_provider.generate_embeddings_batch(chunks_text)
+        
+        # Create VectorChunk objects
+        vector_chunks = []
+        for idx, (chunk_text, embedding) in enumerate(zip(chunks_text, embeddings)):
+            metadata = ChunkMetadata(
                 profile_id=profile_id,
                 source_type=source_type,
-                source_id=item.get("id"),
+                source_id=source_id,
+                chunk_index=idx,
             )
-            chunks.extend(item_chunks)
-        return chunks
+            vector_chunks.append(
+                VectorChunk(
+                    text=chunk_text,
+                    embedding=embedding,
+                    metadata=metadata,
+                )
+            )
+        
+        return vector_chunks
     
-    async def ingest_profile_data(
-        self,
-        profile_id: int,
-        profile_summary: Optional[str] = None,
-        experiences: Optional[List[dict]] = None,
-        projects: Optional[List[dict]] = None,
-        skills: Optional[List[dict]] = None,
-    ) -> None:
-        """Ingest structured profile data from PostgreSQL."""
-        chunks_to_store = []
-        
-        # Ingest summary
-        if profile_summary:
-            chunks = await self._create_chunks(
-                text=profile_summary,
-                profile_id=profile_id,
-                source_type=SourceType.SUMMARY,
-            )
-            chunks_to_store.extend(chunks)
-        
-        # Ingest experiences
-        if experiences:
-            chunks = await self._ingest_items(
-                experiences, profile_id, SourceType.EXPERIENCE, _format_experience
-            )
-            chunks_to_store.extend(chunks)
-        
-        # Ingest projects
-        if projects:
-            chunks = await self._ingest_items(
-                projects, profile_id, SourceType.PROJECT, _format_project
-            )
-            chunks_to_store.extend(chunks)
-        
-        # Ingest skills
-        if skills:
-            skills_text = _format_skills(skills)
-            chunks = await self._create_chunks(
-                text=skills_text,
-                profile_id=profile_id,
-                source_type=SourceType.SKILL,
-            )
-            chunks_to_store.extend(chunks)
-        
-        if chunks_to_store:
-            await self.vector_store.upsert_chunks(chunks_to_store, profile_id)
-    
-    async def ingest_document(
-        self,
-        profile_id: int,
-        document_text: str,
-        source_type: SourceType,
-        source_id: Optional[int] = None,
-    ) -> None:
-        """Ingest unstructured document (CV PDF, markdown, README, etc.)."""
-        chunks = await self._create_chunks(
-            text=document_text,
-            profile_id=profile_id,
-            source_type=source_type,
-            source_id=source_id,
-            use_batch=True,
-        )
-        
-        if chunks:
-            await self.vector_store.upsert_chunks(chunks, profile_id)
-    
-    async def reingest_profile(self, profile_id: int, **kwargs) -> None:
+    def _chunk_text(self, text: str, max_chunk_size: int = 500) -> List[str]:
         """
-        Re-ingest profile data (idempotent operation).
+        Split text into chunks.
         
-        Deletes existing chunks for the profile, then ingests fresh data.
+        Simple strategy: Keep chunks under max_chunk_size characters.
+        Split on periods if possible.
+        
+        Args:
+            text: Text to chunk
+            max_chunk_size: Maximum characters per chunk
+            
+        Returns:
+            List of text chunks
         """
-        await self.vector_store.delete_profile_chunks(profile_id)
-        await self.ingest_profile_data(profile_id, **kwargs)
+        if len(text) <= max_chunk_size:
+            return [text]
+        
+        # Split on sentences (periods followed by space)
+        sentences = text.replace('. ', '.|').split('|')
+        
+        chunks = []
+        current_chunk = ""
+        
+        for sentence in sentences:
+            if len(current_chunk) + len(sentence) <= max_chunk_size:
+                current_chunk += sentence + " "
+            else:
+                if current_chunk:
+                    chunks.append(current_chunk.strip())
+                current_chunk = sentence + " "
+        
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+        
+        return chunks if chunks else [text]

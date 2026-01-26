@@ -172,33 +172,28 @@ class ProfileAgent:
     async def _get_rag_context(
         self,
         context: RequestContext,
-    ) -> Optional[str]:
+) -> Optional[str]:
         """
         Get RAG context via semantic search if available.
-        
-        Args:
-            context: Request context
-            
-        Returns:
-            Formatted context string or None
         """
         if not self.retrieval_pipeline:
             return None
         
+        # If context already has RAG context, use it
         if context.rag_context:
             return context.rag_context
         
         try:
-            rag_context = await semantic_search_tools.semantic_search_with_context(
+            # Call retrieval pipeline directly
+            rag_context = await self.retrieval_pipeline.retrieve_context(
                 query=context.user_query,
                 profile_id=context.profile_id,
-                retrieval_pipeline=self.retrieval_pipeline,
-                top_k=5,
-                max_context_length=2000,
+                top_k=3,  # Get top 3 most relevant chunks
+                min_score=0.3,  # 30% similarity minimum
             )
             return rag_context if rag_context else None
         except Exception as e:
-            logger.warning(f"Semantic search failed: {e}")
+            logger.warning(f"RAG retrieval failed: {e}")
             return None
     
     def _build_prompt(
