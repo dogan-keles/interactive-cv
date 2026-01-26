@@ -198,3 +198,63 @@ async def health():
         "database": "connected" if check_connection() else "disconnected",
         "mode": "production" if _db_session else "no-database",
     }
+
+@app.post("/admin/ingest-vectors")
+async def ingest_vectors_endpoint():
+    """
+    Admin endpoint to trigger vector ingestion in production.
+    Run this once after deployment to populate embeddings.
+    """
+    try:
+        from backend.data_access.vector_db.pgvector_store import PgVectorStore
+        from backend.data_access.vector_db.sentence_transformer_embedding import SentenceTransformerEmbedding
+        from backend.data_access.vector_db.ingestion import DocumentIngestion
+        
+        if not _db_session:
+            return {
+                "success": False,
+                "error": "Database not connected"
+            }
+        
+        logger.info("Starting vector ingestion via admin endpoint...")
+        
+        # Initialize embedding provider
+        embedding_provider = SentenceTransformerEmbedding()
+        logger.info("Embedding provider initialized")
+        
+        # Initialize vector store
+        vector_store = PgVectorStore(
+            db_session=_db_session,
+            embedding_provider=embedding_provider,
+        )
+        logger.info("Vector store initialized")
+        
+        # Initialize ingestion pipeline
+        ingestion = DocumentIngestion(
+            vector_store=vector_store,
+            embedding_provider=embedding_provider,
+        )
+        logger.info("Ingestion pipeline initialized")
+        
+        # Ingest profile
+        num_chunks = await ingestion.ingest_profile(
+            profile_id=1,
+            db_session=_db_session,
+        )
+        
+        logger.info(f"Ingestion complete: {num_chunks} chunks created")
+        
+        return {
+            "success": True,
+            "chunks_created": num_chunks,
+            "message": f"Successfully created {num_chunks} vector embeddings",
+            "profile_id": 1
+        }
+    
+    except Exception as e:
+        logger.error(f"Ingestion failed: {e}", exc_info=True)
+        return {
+            "success": False,
+            "error": str(e)
+        }
+    
