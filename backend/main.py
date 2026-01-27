@@ -180,6 +180,8 @@ chat.set_orchestrator_dependency(get_orchestrator)
 app.include_router(chat.router)
 app.include_router(profile.router)
 
+from backend.api.routes import cv  
+app.include_router(cv.router)      
 
 @app.get("/")
 def root():
