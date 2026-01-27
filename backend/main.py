@@ -177,7 +177,7 @@ def get_orchestrator() -> Orchestrator:
 # Routes
 # -------------------------------------------------------------------
 chat.set_orchestrator_dependency(get_orchestrator)
-app.include_router(chat.router)
+app.include_router(chat.router, prefix="/api")
 app.include_router(profile.router)
 
 from backend.api.routes import cv  
