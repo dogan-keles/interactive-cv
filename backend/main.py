@@ -29,14 +29,21 @@ from backend.agents.guardrail_agent import GuardrailAgent
 # Orchestrator
 from backend.orchestrator.orchestrator import Orchestrator
 
+# Middleware
+from backend.middleware.error_logger import ErrorLoggingMiddleware
+
 # Routes
-from backend.api.routes import chat, profile
+from backend.api.routes import chat, profile, cv
 
 
 # -------------------------------------------------------------------
-# Logging
+# Logging Configuration
 # -------------------------------------------------------------------
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s | %(levelname)s | %(name)s | %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 logger = logging.getLogger(__name__)
 
 
@@ -155,13 +162,36 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+# -------------------------------------------------------------------
+# CORS Configuration - Environment-based
+# -------------------------------------------------------------------
+environment = os.getenv("ENVIRONMENT", "development")
+
+allowed_origins = []
+
+if environment == "production":
+    # Production: Only allow production domain
+    production_url = os.getenv("FRONTEND_URL")
+    if production_url:
+        allowed_origins.append(production_url)
+    logger.info(f"🔐 Production mode - CORS allowed origins: {allowed_origins}")
+else:
+    # Development: Allow localhost ports
+    local_urls = os.getenv("LOCAL_FRONTEND_URLS", "http://localhost:3000,http://localhost:5173")
+    allowed_origins = local_urls.split(",")
+    logger.info(f"🔐 Development mode - CORS allowed origins: {allowed_origins}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Error Logging Middleware
+app.add_middleware(ErrorLoggingMiddleware)
 
 
 # -------------------------------------------------------------------
@@ -179,9 +209,8 @@ def get_orchestrator() -> Orchestrator:
 chat.set_orchestrator_dependency(get_orchestrator)
 app.include_router(chat.router, prefix="/api")
 app.include_router(profile.router)
+app.include_router(cv.router)
 
-from backend.api.routes import cv  
-app.include_router(cv.router)      
 
 @app.get("/")
 def root():
@@ -189,6 +218,7 @@ def root():
         "message": "Interactive CV API is running 🚀",
         "version": "1.0.0",
         "docs": "/docs",
+        "environment": environment,
     }
 
 
@@ -196,6 +226,7 @@ def root():
 async def health():
     return {
         "status": "healthy",
+        "environment": environment,
         "llm_provider": "groq",
         "database": "connected" if check_connection() else "disconnected",
         "mode": "production" if _db_session else "no-database",
