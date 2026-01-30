@@ -173,7 +173,7 @@ allowed_origins = [
     "http://localhost:5173",
     "https://dogankeles.com",
     "https://www.dogankeles.com",
-    "https://interactive-cv-taupe.vercel.app" # Vercel veya diğer prod linklerin
+    "https://interactive-cv-fe.vercel.app/" # Vercel veya diğer prod linklerin
 ]
 
 # Ortam değişkenlerinden gelen diğer linkleri de ekle
