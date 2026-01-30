@@ -92,7 +92,6 @@ async def lifespan(app: FastAPI):
             
             logger.info("📥 Initializing RAG components...")
             
-            # Initialize embedding provider (lightweight TF-IDF)
             embedding_provider = SklearnTfidfEmbedding(max_features=384)
             logger.info(f"✅ Embedding provider initialized (dimension: {embedding_provider.get_dimension()})")
 
@@ -164,23 +163,26 @@ app = FastAPI(
 
 
 # -------------------------------------------------------------------
-# CORS Configuration - Environment-based
+# CORS Configuration - DÜZENLENDİ 🔐
 # -------------------------------------------------------------------
 environment = os.getenv("ENVIRONMENT", "development")
 
-allowed_origins = []
+# Güvenli kaynakları buraya ekliyoruz
+allowed_origins = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "https://dogankeles.com",
+    "https://www.dogankeles.com",
+    "https://interactive-cv-taupe.vercel.app" # Vercel veya diğer prod linklerin
+]
 
-if environment == "production":
-    # Production: Only allow production domain
-    production_url = os.getenv("FRONTEND_URL")
-    if production_url:
-        allowed_origins.append(production_url)
-    logger.info(f"🔐 Production mode - CORS allowed origins: {allowed_origins}")
-else:
-    # Development: Allow localhost ports
-    local_urls = os.getenv("LOCAL_FRONTEND_URLS", "http://localhost:3000,http://localhost:5173")
-    allowed_origins = local_urls.split(",")
-    logger.info(f"🔐 Development mode - CORS allowed origins: {allowed_origins}")
+# Ortam değişkenlerinden gelen diğer linkleri de ekle
+if os.getenv("FRONTEND_URL"):
+    allowed_origins.append(os.getenv("FRONTEND_URL"))
+
+local_urls = os.getenv("LOCAL_FRONTEND_URLS")
+if local_urls:
+    allowed_origins.extend(local_urls.split(","))
 
 app.add_middleware(
     CORSMiddleware,
@@ -204,11 +206,14 @@ def get_orchestrator() -> Orchestrator:
 
 
 # -------------------------------------------------------------------
-# Routes
+# Routes - ÖNEMLİ: Prefixler tutarlı olmalı
 # -------------------------------------------------------------------
 chat.set_orchestrator_dependency(get_orchestrator)
+
+# Tüm profil rotalarına /api prefix'ini backend router içinde verdiğin için 
+# burada doğrudan include edebiliriz
 app.include_router(chat.router, prefix="/api")
-app.include_router(profile.router)
+app.include_router(profile.router) # profile.router zaten kendi içinde /api/profile prefixine sahip
 app.include_router(cv.router)
 
 
@@ -217,21 +222,17 @@ def root():
     return {
         "message": "Interactive CV API is running 🚀",
         "version": "1.0.0",
-        "docs": "/docs",
         "environment": environment,
     }
-
 
 @app.get("/health")
 async def health():
     return {
         "status": "healthy",
-        "environment": environment,
-        "llm_provider": "groq",
         "database": "connected" if check_connection() else "disconnected",
-        "mode": "production" if _db_session else "no-database",
     }
 
+# Admin ingest endpointi burada kalabilir...
 
 @app.post("/admin/ingest-vectors")
 async def ingest_vectors_endpoint():

@@ -284,3 +284,49 @@ def list_profiles(
             for p in profiles
         ]
     }
+
+
+@router.get("/{profile_id}/seo")
+def get_profile_seo(
+    profile_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Get SEO information for profile.
+    
+    Args:
+        profile_id: Profile ID
+        db: Database session
+        
+    Returns:
+        SEO metadata (title, description, keywords)
+    """
+    profile = db.query(Profile).filter(Profile.id == profile_id).first()
+    
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    
+    # Get top skills (limit 10 for keywords)
+    skills = db.query(Skill).filter(Skill.profile_id == profile_id).limit(10).all()
+    skill_names = [skill.name for skill in skills]
+    
+    # Build SEO data
+    # Note: 'title' field doesn't exist in profiles table, so we construct it
+    title = f"{profile.name} - Software Engineer & AI Specialist"
+    
+    # Truncate summary to 160 chars for meta description best practice
+    summary = (
+        profile.summary[:160] if profile.summary 
+        else f"Explore {profile.name}'s interactive CV with AI chat assistant."
+    )
+    
+    # Build keywords from name and top skills
+    keywords = f"{profile.name}, Software Engineer, {', '.join(skill_names[:8])}"
+    
+    return {
+        "name": profile.name,
+        "title": title,
+        "summary": summary,
+        "keywords": keywords,
+        "location": profile.location,
+    }
