@@ -1,18 +1,17 @@
 """
-Profile API routes with automatic vector embedding synchronization.
+Profile API routes.
 
 Endpoints for creating and managing profile data.
 """
 
 from typing import List, Optional
 from datetime import date
-import logging
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from backend.infrastructure.database import get_db, SessionLocal
+from backend.infrastructure.database import get_db
 from backend.data_access.knowledge_base.postgres import (
     Profile,
     Skill,
@@ -24,49 +23,6 @@ router = APIRouter(
     prefix="/api/profile",
     tags=["profile"],
 )
-
-logger = logging.getLogger(__name__)
-
-
-# ============================================================================
-# Background Task for Embedding Sync
-# ============================================================================
-
-async def sync_embeddings_background(profile_id: int):
-    """
-    Background task to synchronize vector embeddings after profile update.
-    
-    This runs asynchronously and doesn't block the API response.
-    """
-    try:
-        from backend.data_access.vector_db.pgvector_store import PgVectorStore
-        from backend.data_access.vector_db.sklearn_embedding import SklearnTfidfEmbedding
-        from backend.data_access.vector_db.ingestion import DocumentIngestion
-        
-        # Create new DB session for background task
-        db = SessionLocal()
-        
-        try:
-            logger.info(f"🔄 Starting background embedding sync for profile {profile_id}")
-            
-            # Initialize components
-            embedding_provider = SklearnTfidfEmbedding(max_features=384)
-            vector_store = PgVectorStore(db_session=db, embedding_provider=embedding_provider)
-            ingestion = DocumentIngestion(
-                vector_store=vector_store, 
-                embedding_provider=embedding_provider
-            )
-            
-            # Re-generate embeddings
-            num_chunks = await ingestion.ingest_profile(profile_id, db)
-            
-            logger.info(f"✅ Embeddings synced for profile {profile_id}: {num_chunks} chunks")
-            
-        finally:
-            db.close()
-            
-    except Exception as e:
-        logger.error(f"❌ Failed to sync embeddings for profile {profile_id}: {e}", exc_info=True)
 
 
 # ============================================================================
@@ -109,16 +65,6 @@ class ProfileCreate(BaseModel):
     projects: Optional[List[ProjectCreate]] = None
 
 
-class ProfileUpdate(BaseModel):
-    """Schema for updating profile - all fields optional"""
-    name: Optional[str] = None
-    email: Optional[str] = None
-    location: Optional[str] = None
-    summary: Optional[str] = None
-    linkedin_url: Optional[str] = None
-    github_username: Optional[str] = None
-
-
 class ProfileResponse(BaseModel):
     id: int
     name: str
@@ -137,18 +83,15 @@ class ProfileResponse(BaseModel):
 # ============================================================================
 
 @router.post("", response_model=ProfileResponse, status_code=201)
-async def create_profile(
+def create_profile(
     profile_data: ProfileCreate,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     """
     Create a new profile with skills, experiences, and projects.
-    Automatically generates vector embeddings in background.
     
     Args:
         profile_data: Profile creation data
-        background_tasks: FastAPI background tasks
         db: Database session
         
     Returns:
@@ -210,10 +153,6 @@ async def create_profile(
         db.commit()
         db.refresh(profile)
         
-        # Sync embeddings in background
-        background_tasks.add_task(sync_embeddings_background, profile.id)
-        logger.info(f"✅ Profile {profile.id} created, embeddings sync queued")
-        
         return profile
     
     except Exception as e:
@@ -245,98 +184,6 @@ def get_profile(
         raise HTTPException(status_code=404, detail="Profile not found")
     
     return profile
-
-
-@router.put("/{profile_id}", response_model=ProfileResponse)
-async def update_profile(
-    profile_id: int,
-    profile_data: ProfileUpdate,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-):
-    """
-    Update profile and automatically sync vector embeddings.
-    
-    Embeddings are regenerated in the background, so the API responds immediately.
-    
-    Args:
-        profile_id: Profile ID
-        profile_data: Updated profile data (all fields optional)
-        background_tasks: FastAPI background tasks
-        db: Database session
-        
-    Returns:
-        Updated profile
-    """
-    profile = db.query(Profile).filter(Profile.id == profile_id).first()
-    
-    if not profile:
-        raise HTTPException(status_code=404, detail="Profile not found")
-    
-    # Update only provided fields
-    update_data = profile_data.dict(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(profile, field, value)
-    
-    db.commit()
-    db.refresh(profile)
-    
-    # Schedule background task to sync embeddings
-    background_tasks.add_task(sync_embeddings_background, profile_id)
-    
-    logger.info(f"✅ Profile {profile_id} updated, embeddings sync queued")
-    
-    return profile
-
-
-@router.put("/{profile_id}/skills", status_code=200)
-async def update_skills(
-    profile_id: int,
-    skills: List[SkillCreate],
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-):
-    """
-    Replace all profile skills and sync embeddings.
-    
-    Args:
-        profile_id: Profile ID
-        skills: New skills list
-        background_tasks: FastAPI background tasks
-        db: Database session
-        
-    Returns:
-        Success message
-    """
-    # Check profile exists
-    profile = db.query(Profile).filter(Profile.id == profile_id).first()
-    if not profile:
-        raise HTTPException(status_code=404, detail="Profile not found")
-    
-    # Delete old skills
-    db.query(Skill).filter(Skill.profile_id == profile_id).delete()
-    
-    # Add new skills
-    for skill_data in skills:
-        skill = Skill(
-            profile_id=profile_id,
-            name=skill_data.name,
-            category=skill_data.category,
-            proficiency_level=skill_data.proficiency_level,
-        )
-        db.add(skill)
-    
-    db.commit()
-    
-    # Sync embeddings in background
-    background_tasks.add_task(sync_embeddings_background, profile_id)
-    
-    logger.info(f"✅ Skills updated for profile {profile_id}, embeddings sync queued")
-    
-    return {
-        "success": True, 
-        "message": "Skills updated successfully, embeddings syncing in background"
-    }
 
 
 @router.get("/{profile_id}/full")
@@ -464,6 +311,7 @@ def get_profile_seo(
     skill_names = [skill.name for skill in skills]
     
     # Build SEO data
+    # Note: 'title' field doesn't exist in profiles table, so we construct it
     title = f"{profile.name} - Software Engineer & AI Specialist"
     
     # Truncate summary to 160 chars for meta description best practice
@@ -482,53 +330,3 @@ def get_profile_seo(
         "keywords": keywords,
         "location": profile.location,
     }
-
-
-@router.post("/{profile_id}/sync-embeddings")
-async def manual_sync_embeddings(
-    profile_id: int,
-    db: Session = Depends(get_db),
-):
-    """
-    Manually trigger embedding synchronization.
-    
-    Useful for debugging or forcing a sync without updating profile.
-    
-    Args:
-        profile_id: Profile ID
-        db: Database session
-        
-    Returns:
-        Success message with chunk count
-    """
-    # Check profile exists
-    profile = db.query(Profile).filter(Profile.id == profile_id).first()
-    if not profile:
-        raise HTTPException(status_code=404, detail="Profile not found")
-    
-    try:
-        from backend.data_access.vector_db.pgvector_store import PgVectorStore
-        from backend.data_access.vector_db.sklearn_embedding import SklearnTfidfEmbedding
-        from backend.data_access.vector_db.ingestion import DocumentIngestion
-        
-        # Initialize components
-        embedding_provider = SklearnTfidfEmbedding(max_features=384)
-        vector_store = PgVectorStore(db_session=db, embedding_provider=embedding_provider)
-        ingestion = DocumentIngestion(
-            vector_store=vector_store, 
-            embedding_provider=embedding_provider
-        )
-        
-        # Re-ingest
-        num_chunks = await ingestion.ingest_profile(profile_id, db)
-        
-        return {
-            "success": True,
-            "profile_id": profile_id,
-            "chunks_updated": num_chunks,
-            "message": "Vector embeddings synchronized successfully"
-        }
-        
-    except Exception as e:
-        logger.error(f"Manual sync failed for profile {profile_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))

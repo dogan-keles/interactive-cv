@@ -1,12 +1,16 @@
 """
-GitHub Agent implementation.
+GitHub Agent implementation - FIXED VERSION
 
 Handles questions about GitHub repositories, projects, and tech stack.
 Uses github_tools and optional semantic search to retrieve data.
+
+CHANGES:
+- Uses session factory instead of global session (thread-safe)
+- Creates and closes sessions properly for each request
 """
 
 import logging
-from typing import Optional
+from typing import Optional, Callable
 
 from sqlalchemy.orm import Session
 
@@ -29,7 +33,7 @@ class GitHubAgent:
     def __init__(
         self,
         llm_provider: BaseLLMProvider,
-        db_session: Optional[Session] = None,
+        db_session_factory: Optional[Callable[[], Session]] = None,
         retrieval_pipeline: Optional[RAGRetrievalPipeline] = None,
     ):
         """
@@ -37,11 +41,11 @@ class GitHubAgent:
         
         Args:
             llm_provider: LLM provider for generating responses
-            db_session: Database session for data access
+            db_session_factory: Factory function to create database sessions (e.g., SessionLocal)
             retrieval_pipeline: Optional RAG pipeline for semantic search
         """
         self.llm_provider = llm_provider
-        self.db_session = db_session
+        self.db_session_factory = db_session_factory
         self.retrieval_pipeline = retrieval_pipeline
 
     async def process(self, context: RequestContext) -> str:
@@ -54,12 +58,15 @@ class GitHubAgent:
         Returns:
             Agent response about GitHub repositories
         """
-        if self.db_session is None:
-            return "GitHub data is not available."
+        if self.db_session_factory is None:
+            return "GitHub data is not available. Database connection is required."
 
+        # Create temporary session for this request
+        db = self.db_session_factory()
+        
         try:
             # Gather GitHub data
-            github_data = await self._gather_github_data(context)
+            github_data = await self._gather_github_data(context, db)
             
             # Build prompt with repository information
             prompt = self._build_prompt(context, github_data)
@@ -76,13 +83,18 @@ class GitHubAgent:
         except Exception as e:
             logger.error(f"GitHubAgent error processing query: {e}", exc_info=True)
             raise
+        
+        finally:
+            # Always close the session
+            db.close()
 
-    async def _gather_github_data(self, context: RequestContext) -> dict:
+    async def _gather_github_data(self, context: RequestContext, db: Session) -> dict:
         """
         Gather GitHub repository data.
         
         Args:
             context: Request context
+            db: Database session
             
         Returns:
             Dictionary with username and repositories
@@ -90,11 +102,11 @@ class GitHubAgent:
         return {
             "username": await github_tools.get_profile_github_username(
                 profile_id=context.profile_id,
-                db_session=self.db_session,
+                db_session=db,
             ),
             "repositories": await github_tools.get_github_repositories(
                 profile_id=context.profile_id,
-                db_session=self.db_session,
+                db_session=db,
                 max_repos=15,  # Top 15 most important
                 min_stars=0,
                 include_forks=False,

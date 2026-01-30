@@ -1,6 +1,14 @@
 """
-FastAPI main application entry point.
+FastAPI main application entry point - FULLY FIXED VERSION
+
 Initializes LLM provider, database, agents, and orchestrator.
+
+FIXES APPLIED:
+1. Removed global _db_session (thread-safety)
+2. Agents use session factory instead
+3. CORS trailing slash removed
+4. Enhanced health check
+5. Admin endpoint uses temporary sessions
 """
 
 import os
@@ -51,7 +59,6 @@ logger = logging.getLogger(__name__)
 # Globals
 # -------------------------------------------------------------------
 _orchestrator: Orchestrator | None = None
-_db_session = None
 
 
 # -------------------------------------------------------------------
@@ -59,17 +66,16 @@ _db_session = None
 # -------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _orchestrator, _db_session
+    global _orchestrator
 
     logger.info("🚀 Initializing application...")
 
     # 1. Database
-    if check_connection():
+    db_connected = check_connection()
+    if db_connected:
         logger.info("✅ Database connected (Neon DB)")
-        _db_session = SessionLocal()
     else:
         logger.warning("⚠️ Database connection failed - running without DB")
-        _db_session = None
 
     # 2. LLM Provider
     groq_api_key = os.getenv("GROQ_API_KEY")
@@ -82,9 +88,10 @@ async def lifespan(app: FastAPI):
     )
     logger.info("✅ Groq LLM provider initialized")
 
-    # 3. RAG (optional)
+    # 3. RAG (optional) - FIXED: Use temporary session for initialization
     retrieval_pipeline = None
-    if _db_session:
+    if db_connected:
+        temp_db = SessionLocal()
         try:
             from backend.data_access.vector_db.pgvector_store import PgVectorStore
             from backend.data_access.vector_db.sklearn_embedding import SklearnTfidfEmbedding
@@ -96,7 +103,7 @@ async def lifespan(app: FastAPI):
             logger.info(f"✅ Embedding provider initialized (dimension: {embedding_provider.get_dimension()})")
 
             vector_store = PgVectorStore(
-                db_session=_db_session,
+                db_session=temp_db,
                 embedding_provider=embedding_provider,
             )
 
@@ -110,27 +117,29 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️ RAG initialization failed: {e}")
             retrieval_pipeline = None
+        finally:
+            temp_db.close()
 
-    # 4. Agents
+    # 4. Agents - FIXED: Pass SessionLocal factory (not instance)
     profile_agent = ProfileAgent(
         llm_provider=llm_provider,
-        db_session=_db_session,
+        db_session_factory=SessionLocal if db_connected else None,
         retrieval_pipeline=retrieval_pipeline,
     )
 
     github_agent = GitHubAgent(
         llm_provider=llm_provider,
-        db_session=_db_session,
+        db_session_factory=SessionLocal if db_connected else None,
     )
 
     cv_agent = CVAgent(
         llm_provider=llm_provider,
-        db_session=_db_session,
+        db_session_factory=SessionLocal if db_connected else None,
     )
 
     guardrail_agent = GuardrailAgent(llm_provider)
 
-    logger.info("✅ Agents initialized")
+    logger.info("✅ Agents initialized with session factories")
 
     # 5. Orchestrator
     _orchestrator = Orchestrator(
@@ -146,9 +155,6 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("🛑 Shutting down application...")
-    if _db_session:
-        _db_session.close()
-        logger.info("✅ Database session closed")
 
 
 # -------------------------------------------------------------------
@@ -163,26 +169,33 @@ app = FastAPI(
 
 
 # -------------------------------------------------------------------
-# CORS Configuration - DÜZENLENDİ 🔐
+# CORS Configuration - FIXED: Environment-based + removed trailing slash
 # -------------------------------------------------------------------
 environment = os.getenv("ENVIRONMENT", "development")
 
-# Güvenli kaynakları buraya ekliyoruz
+# Base allowed origins
 allowed_origins = [
     "http://localhost:3000",
     "http://localhost:5173",
     "https://dogankeles.com",
     "https://www.dogankeles.com",
-    "https://interactive-cv-fe.vercel.app/" # Vercel veya diğer prod linklerin
+    "https://interactive-cv-fe.vercel.app",  # FIXED: Removed trailing slash
 ]
 
-# Ortam değişkenlerinden gelen diğer linkleri de ekle
-if os.getenv("FRONTEND_URL"):
-    allowed_origins.append(os.getenv("FRONTEND_URL"))
+# Add frontend URL from environment
+frontend_url = os.getenv("FRONTEND_URL")
+if frontend_url and frontend_url not in allowed_origins:
+    allowed_origins.append(frontend_url)
 
+# Add local URLs from environment
 local_urls = os.getenv("LOCAL_FRONTEND_URLS")
 if local_urls:
-    allowed_origins.extend(local_urls.split(","))
+    for url in local_urls.split(","):
+        url = url.strip()
+        if url and url not in allowed_origins:
+            allowed_origins.append(url)
+
+logger.info(f"🔐 CORS allowed origins: {allowed_origins}")
 
 app.add_middleware(
     CORSMiddleware,
@@ -200,66 +213,84 @@ app.add_middleware(ErrorLoggingMiddleware)
 # Dependencies
 # -------------------------------------------------------------------
 def get_orchestrator() -> Orchestrator:
+    """Get orchestrator instance."""
     if _orchestrator is None:
         raise RuntimeError("Orchestrator not initialized")
     return _orchestrator
 
 
 # -------------------------------------------------------------------
-# Routes - ÖNEMLİ: Prefixler tutarlı olmalı
+# Routes
 # -------------------------------------------------------------------
 chat.set_orchestrator_dependency(get_orchestrator)
-
-# Tüm profil rotalarına /api prefix'ini backend router içinde verdiğin için 
-# burada doğrudan include edebiliriz
 app.include_router(chat.router, prefix="/api")
-app.include_router(profile.router) # profile.router zaten kendi içinde /api/profile prefixine sahip
+app.include_router(profile.router)
 app.include_router(cv.router)
 
 
 @app.get("/")
 def root():
+    """Root endpoint."""
     return {
         "message": "Interactive CV API is running 🚀",
         "version": "1.0.0",
         "environment": environment,
     }
 
+
 @app.get("/health")
 async def health():
-    return {
+    """
+    Enhanced health check endpoint.
+    
+    Returns:
+        Health status with database and environment info
+    """
+    health_status = {
         "status": "healthy",
+        "environment": environment,
         "database": "connected" if check_connection() else "disconnected",
     }
+    
+    # If database is disconnected, mark as unhealthy
+    if health_status["database"] == "disconnected":
+        health_status["status"] = "degraded"
+    
+    return health_status
 
-# Admin ingest endpointi burada kalabilir...
 
 @app.post("/admin/ingest-vectors")
 async def ingest_vectors_endpoint():
     """
     Admin endpoint to trigger vector ingestion in production.
     Run this once after deployment to populate embeddings.
+    
+    FIXED: Uses temporary database session instead of global variable.
     """
+    # FIXED: Check connection instead of global variable
+    if not check_connection():
+        return {
+            "success": False,
+            "error": "Database not connected"
+        }
+    
+    # FIXED: Create temporary session for this operation
+    db = SessionLocal()
+    
     try:
         from backend.data_access.vector_db.pgvector_store import PgVectorStore
         from backend.data_access.vector_db.sklearn_embedding import SklearnTfidfEmbedding
         from backend.data_access.vector_db.ingestion import DocumentIngestion
         
-        if not _db_session:
-            return {
-                "success": False,
-                "error": "Database not connected"
-            }
-        
         logger.info("Starting vector ingestion via admin endpoint...")
         
-        # Initialize embedding provider (lightweight TF-IDF)
+        # Initialize embedding provider
         embedding_provider = SklearnTfidfEmbedding(max_features=384)
         logger.info("Embedding provider initialized")
         
         # Initialize vector store
         vector_store = PgVectorStore(
-            db_session=_db_session,
+            db_session=db,
             embedding_provider=embedding_provider,
         )
         logger.info("Vector store initialized")
@@ -274,7 +305,7 @@ async def ingest_vectors_endpoint():
         # Ingest profile
         num_chunks = await ingestion.ingest_profile(
             profile_id=1,
-            db_session=_db_session,
+            db_session=db,
         )
         
         logger.info(f"Ingestion complete: {num_chunks} chunks created")
@@ -292,3 +323,7 @@ async def ingest_vectors_endpoint():
             "success": False,
             "error": str(e)
         }
+    
+    finally:
+        # FIXED: Always close the session
+        db.close()

@@ -1,12 +1,16 @@
 """
-Profile Agent implementation.
+Profile Agent implementation - FIXED VERSION
 
 Handles questions about professional skills, experience, and background.
 Uses profile tools and optional semantic search to retrieve data.
+
+CHANGES:
+- Uses session factory instead of global session (thread-safe)
+- Creates and closes sessions properly for each request
 """
 
 import logging
-from typing import Optional
+from typing import Optional, Callable
 
 from sqlalchemy.orm import Session
 
@@ -35,7 +39,7 @@ class ProfileAgent:
     def __init__(
         self,
         llm_provider: BaseLLMProvider,
-        db_session: Optional[Session] = None,
+        db_session_factory: Optional[Callable[[], Session]] = None,
         retrieval_pipeline: Optional[RAGRetrievalPipeline] = None,
     ):
         """
@@ -43,11 +47,11 @@ class ProfileAgent:
         
         Args:
             llm_provider: LLM provider for generating responses
-            db_session: SQLAlchemy database session (optional)
+            db_session_factory: Factory function to create database sessions (e.g., SessionLocal)
             retrieval_pipeline: Optional RAG retrieval pipeline for semantic search
         """
         self.llm_provider = llm_provider
-        self.db_session = db_session
+        self.db_session_factory = db_session_factory
         self.retrieval_pipeline = retrieval_pipeline
     
     async def process(self, context: RequestContext) -> str:
@@ -91,73 +95,85 @@ class ProfileAgent:
         Returns:
             Dictionary with profile data
         """
-        # If no database session, return empty
-        if not self.db_session:
-            logger.warning("No database session available - using fallback")
+        # If no database session factory, return fallback
+        if not self.db_session_factory:
+            logger.warning("No database session factory available - using fallback")
             return self._get_fallback_data()
         
-        query_lower = context.user_query.lower()
-        data = {}
+        # Create temporary session for this request
+        db = self.db_session_factory()
         
-        # Skill-related queries
-        if any(keyword in query_lower for keyword in [
-            "skill", "yetenek", "teknoloji", "technology", 
-            "expertise", "uzmanlık", "know", "biliyor", "can"
-        ]):
-            data["skills"] = await profile_tools.get_profile_skills(
-                context.profile_id,
-                self.db_session,
-            )
+        try:
+            query_lower = context.user_query.lower()
+            data = {}
+            
+            # Skill-related queries
+            if any(keyword in query_lower for keyword in [
+                "skill", "yetenek", "teknoloji", "technology", 
+                "expertise", "uzmanlık", "know", "biliyor", "can",
+                "dizane", "jêhatî"  # Kurdish
+            ]):
+                data["skills"] = await profile_tools.get_profile_skills(
+                    context.profile_id,
+                    db,
+                )
+            
+            # Experience-related queries
+            if any(keyword in query_lower for keyword in [
+                "experience", "deneyim", "work", "iş", "career", 
+                "kariyer", "job", "pozisyon", "company", "şirket", "worked",
+                "kar", "ezmûn"  # Kurdish
+            ]):
+                data["experiences"] = await profile_tools.get_profile_experiences(
+                    context.profile_id,
+                    db,
+                )
+            
+            # Project-related queries
+            if any(keyword in query_lower for keyword in [
+                "project", "proje", "portfolio", "built", "created", "developed",
+                "proje", "çalışma"  # Kurdish
+            ]):
+                data["projects"] = await profile_tools.get_profile_projects(
+                    context.profile_id,
+                    db,
+                )
+            
+            # Summary/general queries
+            if any(keyword in query_lower for keyword in [
+                "summary", "özet", "background", "geçmiş", 
+                "about", "hakkında", "who", "kim", "tell me",
+                "çi", "kî"  # Kurdish
+            ]):
+                data["summary"] = await profile_tools.get_profile_summary(
+                    context.profile_id,
+                    db,
+                )
+            
+            # If no specific keywords, get general info
+            if not data:
+                data["basic_info"] = await profile_tools.get_profile_basic_info(
+                    context.profile_id,
+                    db,
+                )
+                data["summary"] = await profile_tools.get_profile_summary(
+                    context.profile_id,
+                    db,
+                )
+                data["skills"] = await profile_tools.get_profile_skills(
+                    context.profile_id,
+                    db,
+                )
+            
+            # If database returned nothing, inform the user
+            if not any(data.values()):
+                logger.info(f"No profile data found for profile_id: {context.profile_id}")
+            
+            return data
         
-        # Experience-related queries
-        if any(keyword in query_lower for keyword in [
-            "experience", "deneyim", "work", "iş", "career", 
-            "kariyer", "job", "pozisyon", "company", "şirket", "worked"
-        ]):
-            data["experiences"] = await profile_tools.get_profile_experiences(
-                context.profile_id,
-                self.db_session,
-            )
-        
-        # Project-related queries
-        if any(keyword in query_lower for keyword in [
-            "project", "proje", "portfolio", "built", "created", "developed"
-        ]):
-            data["projects"] = await profile_tools.get_profile_projects(
-                context.profile_id,
-                self.db_session,
-            )
-        
-        # Summary/general queries
-        if any(keyword in query_lower for keyword in [
-            "summary", "özet", "background", "geçmiş", 
-            "about", "hakkında", "who", "kim", "tell me"
-        ]):
-            data["summary"] = await profile_tools.get_profile_summary(
-                context.profile_id,
-                self.db_session,
-            )
-        
-        # If no specific keywords, get general info
-        if not data:
-            data["basic_info"] = await profile_tools.get_profile_basic_info(
-                context.profile_id,
-                self.db_session,
-            )
-            data["summary"] = await profile_tools.get_profile_summary(
-                context.profile_id,
-                self.db_session,
-            )
-            data["skills"] = await profile_tools.get_profile_skills(
-                context.profile_id,
-                self.db_session,
-            )
-        
-        # If database returned nothing, inform the user
-        if not any(data.values()):
-            logger.info(f"No profile data found for profile_id: {context.profile_id}")
-        
-        return data
+        finally:
+            # Always close the session
+            db.close()
     
     def _get_fallback_data(self) -> dict:
         """Fallback mock data when no database is available."""
@@ -172,7 +188,7 @@ class ProfileAgent:
     async def _get_rag_context(
         self,
         context: RequestContext,
-) -> Optional[str]:
+    ) -> Optional[str]:
         """
         Get RAG context via semantic search if available.
         """
@@ -192,6 +208,9 @@ class ProfileAgent:
                 min_score=0.3,  # 30% similarity minimum
             )
             return rag_context if rag_context else None
+        except AttributeError as e:
+            logger.warning(f"RAG retrieval method not found: {e}")
+            return None
         except Exception as e:
             logger.warning(f"RAG retrieval failed: {e}")
             return None
