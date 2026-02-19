@@ -1,9 +1,12 @@
+"""
+LLM provider abstraction.
+"""
+
 from abc import ABC, abstractmethod
 from typing import Optional
 import os
 import logging
 
-# Groq kütüphanesini kullanıyoruz
 try:
     from groq import AsyncGroq
 except ImportError:
@@ -11,7 +14,10 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+
 class BaseLLMProvider(ABC):
+    """Abstract LLM provider interface."""
+    
     @abstractmethod
     async def generate(
         self,
@@ -21,11 +27,9 @@ class BaseLLMProvider(ABC):
     ) -> str:
         pass
 
+
 class GroqProvider(BaseLLMProvider):
-    """
-    Groq LLM provider (Using Llama-3 models).
-    Get API key from: https://console.groq.com/
-    """
+    """Groq LLM provider using Llama models."""
     
     def __init__(
         self,
@@ -35,14 +39,12 @@ class GroqProvider(BaseLLMProvider):
         default_max_tokens: int = 1024,
     ):
         if AsyncGroq is None:
-            raise ImportError("groq paketi gerekli. Kurmak için: pip install groq")
+            raise ImportError("groq package required. Install: pip install groq")
         
-        # API Key'i GROQ_API_KEY olarak çevreden alıyoruz
         self.api_key = api_key or os.getenv("GROQ_API_KEY")
         if not self.api_key:
-            raise ValueError("GROQ_API_KEY eksik! Lütfen .env dosyanı kontrol et.")
+            raise ValueError("GROQ_API_KEY missing. Check your .env file.")
         
-        # Groq client başlatılıyor
         self.client = AsyncGroq(api_key=self.api_key)
         self.model_name = model
         self.default_temperature = default_temperature
@@ -54,12 +56,12 @@ class GroqProvider(BaseLLMProvider):
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
     ) -> str:
+        """Generate text using Groq API."""
         try:
-            # Groq API çağrısı
             response = await self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[
-                    {"role": "system", "content": "Sen yardımcı bir asistan ve profesyonel bir CV uzmanısın."},
+                    {"role": "system", "content": "You are a helpful assistant and professional CV expert."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=temperature if temperature is not None else self.default_temperature,
@@ -69,12 +71,11 @@ class GroqProvider(BaseLLMProvider):
             content = response.choices[0].message.content
             
             if not content:
-                logger.warning("Groq API'den boş yanıt döndü.")
-                return "Üzgünüm, şu an bir yanıt oluşturamadım."
+                logger.warning("Empty response from Groq API")
+                return "I couldn't generate a response at this time."
             
             return content.strip()
         
         except Exception as e:
-            logger.error(f"Groq API Hatası: {e}")
-            # Hata durumunda kullanıcıya anlamlı bir mesaj dönüyoruz
-            return f"Şu an teknik bir sorun yaşıyorum (Groq Error). Detay: {str(e)}"
+            logger.error(f"Groq API error: {e}")
+            return f"Technical error occurred (Groq). Details: {str(e)}"

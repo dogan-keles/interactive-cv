@@ -1,12 +1,5 @@
 """
-GitHub Agent implementation - FIXED VERSION
-
-Handles questions about GitHub repositories, projects, and tech stack.
-Uses github_tools and optional semantic search to retrieve data.
-
-CHANGES:
-- Uses session factory instead of global session (thread-safe)
-- Creates and closes sessions properly for each request
+GitHub Agent - Handles questions about GitHub repositories and projects.
 """
 
 import logging
@@ -23,12 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class GitHubAgent:
-    """
-    Agent for handling GitHub-related queries.
-    
-    Retrieves repository data from GitHub API and presents
-    the most important projects with their tech stacks.
-    """
+    """Agent for handling GitHub-related queries."""
 
     def __init__(
         self,
@@ -36,42 +24,21 @@ class GitHubAgent:
         db_session_factory: Optional[Callable[[], Session]] = None,
         retrieval_pipeline: Optional[RAGRetrievalPipeline] = None,
     ):
-        """
-        Initialize GitHub Agent.
-        
-        Args:
-            llm_provider: LLM provider for generating responses
-            db_session_factory: Factory function to create database sessions (e.g., SessionLocal)
-            retrieval_pipeline: Optional RAG pipeline for semantic search
-        """
         self.llm_provider = llm_provider
         self.db_session_factory = db_session_factory
         self.retrieval_pipeline = retrieval_pipeline
 
     async def process(self, context: RequestContext) -> str:
-        """
-        Process GitHub-related query.
-        
-        Args:
-            context: Request context with user query, profile_id, language
-            
-        Returns:
-            Agent response about GitHub repositories
-        """
+        """Process GitHub-related query."""
         if self.db_session_factory is None:
             return "GitHub data is not available. Database connection is required."
 
-        # Create temporary session for this request
         db = self.db_session_factory()
         
         try:
-            # Gather GitHub data
             github_data = await self._gather_github_data(context, db)
-            
-            # Build prompt with repository information
             prompt = self._build_prompt(context, github_data)
             
-            # Generate response
             response = await self.llm_provider.generate(
                 prompt=prompt,
                 temperature=0.7,
@@ -85,20 +52,10 @@ class GitHubAgent:
             raise
         
         finally:
-            # Always close the session
             db.close()
 
     async def _gather_github_data(self, context: RequestContext, db: Session) -> dict:
-        """
-        Gather GitHub repository data.
-        
-        Args:
-            context: Request context
-            db: Database session
-            
-        Returns:
-            Dictionary with username and repositories
-        """
+        """Gather GitHub repository data."""
         return {
             "username": await github_tools.get_profile_github_username(
                 profile_id=context.profile_id,
@@ -107,7 +64,7 @@ class GitHubAgent:
             "repositories": await github_tools.get_github_repositories(
                 profile_id=context.profile_id,
                 db_session=db,
-                max_repos=15,  # Top 15 most important
+                max_repos=15,
                 min_stars=0,
                 include_forks=False,
             ),
@@ -118,16 +75,7 @@ class GitHubAgent:
         context: RequestContext,
         github_data: dict,
     ) -> str:
-        """
-        Build prompt for LLM with GitHub data context.
-        
-        Args:
-            context: Request context
-            github_data: GitHub repositories data
-            
-        Returns:
-            Formatted prompt string
-        """
+        """Build prompt for LLM with GitHub data context."""
         repos = github_data.get("repositories", [])
         username = github_data.get("username", "Unknown")
         
@@ -140,7 +88,6 @@ LANGUAGE: Respond in {context.language.value}
 No GitHub repositories found for this profile.
 """
         
-        # Build detailed prompt with top repos highlighted
         prompt = f"""You are a GitHub portfolio assistant presenting the candidate's most important projects.
 
 USER QUERY: {context.user_query}
@@ -154,29 +101,22 @@ TOP PROJECTS (sorted by importance - stars, activity, size):
 
 """
         
-        # Show top projects with full details
         top_count = min(5, len(repos))
         
         for i, repo in enumerate(repos[:top_count], 1):
-            # Format tech stack
             languages = repo.get("languages", [])
             if not languages and repo.get("language"):
                 languages = [repo.get("language")]
             tech_stack = ", ".join(languages) if languages else "Not specified"
             
-            # Format topics/tags
             topics = repo.get("topics", [])
             topics_str = ", ".join(topics) if topics else "None"
             
-            # Format stars and forks
             stars = repo.get("stargazers_count", 0)
             forks = repo.get("forks_count", 0)
             
-            # Visual star rating (max 5 stars)
-            # Don't emphasize metrics for low-star projects
             star_display = "⭐" * min(stars, 5) if stars > 3 else ""
             
-            # Only show metrics if significant
             if stars > 0 or forks > 0:
                 metrics = f"({stars} stars, {forks} forks)"
             else:
@@ -192,7 +132,6 @@ TOP PROJECTS (sorted by importance - stars, activity, size):
 
 """
         
-        # If more repos, summarize them by tech stack
         if len(repos) > top_count:
             remaining = repos[top_count:]
             prompt += f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -200,7 +139,6 @@ ADDITIONAL PROJECTS ({len(remaining)}):
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 """
-            # Group by language
             by_language = {}
             for repo in remaining:
                 lang = repo.get("language", "Other")
@@ -214,7 +152,6 @@ ADDITIONAL PROJECTS ({len(remaining)}):
                     prompt += f" (+{len(repos_list) - 5} more)"
                 prompt += "\n"
         
-        # Add tech stack summary
         all_languages = set()
         all_topics = set()
         for repo in repos:

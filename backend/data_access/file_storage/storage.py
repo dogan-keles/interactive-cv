@@ -1,13 +1,9 @@
 """
-File storage abstraction for CV files and other documents.
-
-Provides an interface for storing and retrieving files.
-Concrete implementations can use local filesystem, S3, etc.
+File storage abstraction for CV files and documents.
 """
 
 from abc import ABC, abstractmethod
 from typing import Optional
-import os
 import logging
 from pathlib import Path
 
@@ -24,71 +20,28 @@ class FileStorage(ABC):
         file_path: str,
         content_type: Optional[str] = None,
     ) -> str:
-        """
-        Save file content to storage.
-        
-        Args:
-            content: File content as bytes
-            file_path: Relative path for the file
-            content_type: Optional MIME type
-            
-        Returns:
-            URL or path to access the file
-        """
+        """Save file content to storage."""
         pass
     
     @abstractmethod
-    async def get_file_url(
-        self,
-        file_path: str,
-    ) -> Optional[str]:
-        """
-        Get URL or path to access a file.
-        
-        Args:
-            file_path: Relative path of the file
-            
-        Returns:
-            URL or path, or None if file doesn't exist
-        """
+    async def get_file_url(self, file_path: str) -> Optional[str]:
+        """Get URL or path to access a file."""
         pass
     
     @abstractmethod
-    async def file_exists(
-        self,
-        file_path: str,
-    ) -> bool:
-        """
-        Check if a file exists.
-        
-        Args:
-            file_path: Relative path of the file
-            
-        Returns:
-            True if file exists, False otherwise
-        """
+    async def file_exists(self, file_path: str) -> bool:
+        """Check if a file exists."""
         pass
 
 
 class LocalFileStorage(FileStorage):
-    """
-    Local filesystem storage implementation.
-    
-    Stores files in a local directory.
-    """
+    """Local filesystem storage implementation."""
     
     def __init__(
         self,
         base_directory: str = "storage",
         base_url: str = "/files",
     ):
-        """
-        Initialize local file storage.
-        
-        Args:
-            base_directory: Base directory for file storage
-            base_url: Base URL prefix for file access
-        """
         self.base_directory = Path(base_directory)
         self.base_url = base_url
         self.base_directory.mkdir(parents=True, exist_ok=True)
@@ -109,10 +62,7 @@ class LocalFileStorage(FileStorage):
         logger.info(f"Saved file: {full_path}")
         return f"{self.base_url}/{file_path}"
     
-    async def get_file_url(
-        self,
-        file_path: str,
-    ) -> Optional[str]:
+    async def get_file_url(self, file_path: str) -> Optional[str]:
         """Get URL for local file."""
         full_path = self.base_directory / file_path
         
@@ -121,11 +71,7 @@ class LocalFileStorage(FileStorage):
         
         return f"{self.base_url}/{file_path}"
     
-    async def file_exists(
-        self,
-        file_path: str,
-    ) -> bool:
+    async def file_exists(self, file_path: str) -> bool:
         """Check if file exists in local filesystem."""
         full_path = self.base_directory / file_path
         return full_path.exists()
-

@@ -1,23 +1,14 @@
 """
 RAG retrieval pipeline.
-
-Handles query embedding generation and vector similarity search.
 """
 
 from typing import List, Optional
-
-import numpy as np
 
 from .vector_store import EmbeddingProvider, RetrievedChunk, SourceType, VectorStore
 
 
 class RAGRetrievalPipeline:
-    """
-    Retrieval pipeline for semantic search over vector store.
-    
-    Converts queries to embeddings and retrieves relevant chunks.
-    No LLM calls - pure retrieval logic.
-    """
+    """Retrieval pipeline for semantic search over vector store."""
     
     def __init__(
         self,
@@ -35,23 +26,9 @@ class RAGRetrievalPipeline:
         source_type: Optional[SourceType] = None,
         min_score: float = 0.0,
     ) -> List[RetrievedChunk]:
-        """
-        Retrieve relevant chunks for a query.
-        
-        Args:
-            query: User query text
-            profile_id: Filter to this profile
-            top_k: Number of results
-            source_type: Optional filter by source type
-            min_score: Minimum similarity threshold
-            
-        Returns:
-            List of retrieved chunks sorted by relevance
-        """
-        # Generate query embedding
+        """Retrieve relevant chunks for a query."""
         query_embedding = await self.embedding_provider.generate_embedding(query)
         
-        # Search vector store
         results = await self.vector_store.search(
             query_embedding=query_embedding,
             profile_id=profile_id,
@@ -67,16 +44,7 @@ class RAGRetrievalPipeline:
         chunks: List[RetrievedChunk],
         max_length: Optional[int] = None,
     ) -> str:
-        """
-        Format retrieved chunks into LLM context string.
-        
-        Args:
-            chunks: Retrieved chunks
-            max_length: Optional max character length (truncates if exceeded)
-            
-        Returns:
-            Formatted context string for LLM prompt
-        """
+        """Format retrieved chunks into LLM context string."""
         context_parts = []
         current_length = 0
         
@@ -91,7 +59,3 @@ class RAGRetrievalPipeline:
             context_parts.append(chunk_text)
         
         return "\n\n".join(context_parts)
-
-
-
-

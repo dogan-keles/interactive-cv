@@ -1,8 +1,5 @@
 """
-Guardrail Agent implementation - OPTIMIZED VERSION
-
-Validates responses and handles out-of-scope requests.
-Acts as a safety layer without being overly restrictive.
+Guardrail Agent - Validates responses and handles out-of-scope requests.
 """
 
 import logging
@@ -19,28 +16,9 @@ logger = logging.getLogger(__name__)
 
 
 class GuardrailAgent:
-    """
-    Agent for validating responses and handling edge cases.
-    
-    Responsibilities:
-    - Validate that responses are appropriate and on-topic
-    - Handle out-of-scope requests politely
-    - Prevent hallucinations and off-topic responses
-    - Maintain professional tone
-    
-    NOT responsible for:
-    - Blocking valid profile/GitHub/CV questions
-    - Being overly restrictive
-    - Rewriting good responses
-    """
+    """Agent for validating responses and handling edge cases."""
     
     def __init__(self, llm_provider: BaseLLMProvider):
-        """
-        Initialize GuardrailAgent.
-        
-        Args:
-            llm_provider: LLM provider for generating responses
-        """
         self.llm_provider = llm_provider
     
     async def check_response(
@@ -48,51 +26,30 @@ class GuardrailAgent:
         response: str,
         context: RequestContext,
     ) -> str:
-        """
-        Check if a response is appropriate and on-topic.
-        
-        This is a LIGHT validation - only blocks clearly problematic responses.
-        Most responses should pass through unchanged.
-        
-        Args:
-            response: Agent's response to validate
-            context: Original request context
-            
-        Returns:
-            Original response if valid, or modified response if issues found
-        """
-        # Skip validation for very short responses (likely errors already)
+        """Check if a response is appropriate and on-topic."""
         if len(response) < 20:
             return response
         
-        # Quick heuristic checks (no LLM call needed)
         if self._is_clearly_valid(response, context):
             logger.debug("Response passed quick validation")
             return response
         
-        # Only use LLM validation if response seems suspicious
         if self._seems_suspicious(response):
             logger.info("Response flagged for LLM validation")
             return await self._validate_with_llm(response, context)
         
-        # Default: pass through
         return response
     
     def _is_clearly_valid(self, response: str, context: RequestContext) -> bool:
-        """
-        Quick checks for obviously valid responses.
-        
-        Returns True if response is clearly appropriate (skip LLM validation).
-        """
+        """Quick checks for obviously valid responses."""
         response_lower = response.lower()
         
-        # Valid if response contains relevant keywords based on intent
         if context.intent == Intent.PROFILE_INFO:
             valid_keywords = [
                 "skill", "experience", "technology", "project", "background",
                 "yetenek", "deneyim", "teknoloji", "proje", "geçmiş",
                 "jêhatî", "zanîn", "pispor", "kar",
-                "python", "javascript", "fastapi", "react"  # Tech keywords
+                "python", "javascript", "fastapi", "react"
             ]
             if any(keyword in response_lower for keyword in valid_keywords):
                 return True
@@ -113,21 +70,15 @@ class GuardrailAgent:
             if any(keyword in response_lower for keyword in valid_keywords):
                 return True
         
-        # Valid if response is informative (has substantial content)
-        if len(response) > 100:  # Substantial response
+        if len(response) > 100:
             return True
         
         return False
     
     def _seems_suspicious(self, response: str) -> bool:
-        """
-        Check if response seems suspicious and needs validation.
-        
-        Returns True if response should be validated by LLM.
-        """
+        """Check if response seems suspicious and needs validation."""
         response_lower = response.lower()
         
-        # Suspicious patterns
         suspicious_patterns = [
             "i cannot", "i can't", "i'm not able", "i'm unable",
             "out of scope", "not allowed", "cannot help",
@@ -137,26 +88,16 @@ class GuardrailAgent:
             "nikare", "nasiheyê"
         ]
         
-        # If response contains multiple suspicious patterns, validate
         suspicious_count = sum(1 for pattern in suspicious_patterns if pattern in response_lower)
         
-        return suspicious_count >= 2  # Only flag if multiple red flags
+        return suspicious_count >= 2
     
     async def _validate_with_llm(
         self,
         response: str,
         context: RequestContext,
     ) -> str:
-        """
-        Use LLM to validate response (only called for suspicious responses).
-        
-        Args:
-            response: Response to validate
-            context: Request context
-            
-        Returns:
-            Validated or modified response
-        """
+        """Use LLM to validate response."""
         validation_prompt = f"""You are a guardrail validator. Check if this response is appropriate.
 
 USER QUESTION: {context.user_query}
@@ -192,25 +133,14 @@ Your response:"""
                 return response
             else:
                 logger.warning(f"Response rejected by guardrail: {validation}")
-                # Return a generic safe response
                 return await self.handle_out_of_scope(context)
         
         except Exception as e:
             logger.error(f"Guardrail validation error: {e}")
-            # On error, pass through the original response
             return response
     
     async def handle_out_of_scope(self, context: RequestContext) -> str:
-        """
-        Handle out-of-scope requests politely.
-        
-        Args:
-            context: Request context
-            
-        Returns:
-            Polite redirect message in the user's language
-        """
-        # Check for nonsense queries (gibberish)
+        """Handle out-of-scope requests politely."""
         query = context.user_query.strip()
         if len(query) < 3 or (not any(c.isalpha() for c in query)):
             if context.language == Language.TURKISH:
@@ -247,7 +177,6 @@ Your response:"""
         
         except Exception as e:
             logger.error(f"GuardrailAgent error: {e}")
-            # Fallback message in appropriate language
             if context.language == Language.TURKISH:
                 return "Üzgünüm, bu soru kapsam dışında. Adayın yetenekleri, deneyimi veya projeleri hakkında soru sorabilirsiniz."
             elif context.language == Language.KURDISH:

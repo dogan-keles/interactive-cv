@@ -1,7 +1,5 @@
 """
 PgVector implementation for RAG vector storage.
-
-Uses PostgreSQL with pgvector extension for vector similarity search.
 """
 
 import logging
@@ -23,24 +21,13 @@ logger = logging.getLogger(__name__)
 
 
 class PgVectorStore(VectorStore):
-    """
-    PostgreSQL + pgvector implementation of VectorStore.
-    
-    Uses pgvector extension for efficient vector similarity search.
-    """
+    """PostgreSQL + pgvector implementation of VectorStore."""
     
     def __init__(
         self,
         db_session: Session,
         embedding_provider: EmbeddingProvider,
     ):
-        """
-        Initialize PgVectorStore.
-        
-        Args:
-            db_session: SQLAlchemy database session
-            embedding_provider: Embedding generation provider
-        """
         self.db_session = db_session
         self.embedding_provider = embedding_provider
     
@@ -49,19 +36,11 @@ class PgVectorStore(VectorStore):
         chunks: List[VectorChunk],
         profile_id: int,
     ) -> None:
-        """
-        Insert or update chunks in the vector store.
-        
-        Args:
-            chunks: List of chunks with embeddings and metadata
-            profile_id: Profile ID for filtering/namespace
-        """
+        """Insert or update chunks in the vector store."""
         try:
             for chunk in chunks:
-                # Convert numpy array to list for pgvector
                 embedding_list = chunk.embedding.tolist()
                 
-                # Insert into embeddings table
                 query = text("""
                     INSERT INTO embeddings 
                     (profile_id, text, embedding, source_type, source_id, chunk_index, metadata)
@@ -78,7 +57,7 @@ class PgVectorStore(VectorStore):
                         "source_type": chunk.metadata.source_type.value,
                         "source_id": chunk.metadata.source_id,
                         "chunk_index": chunk.metadata.chunk_index,
-                        "metadata": "{}",  # Can add more metadata as JSON
+                        "metadata": "{}",
                     }
                 )
             
@@ -95,13 +74,7 @@ class PgVectorStore(VectorStore):
         profile_id: int,
         source_type: Optional[SourceType] = None,
     ) -> None:
-        """
-        Delete all chunks for a profile, optionally filtered by source_type.
-        
-        Args:
-            profile_id: Profile to delete chunks for
-            source_type: Optional filter by source type
-        """
+        """Delete all chunks for a profile."""
         try:
             if source_type:
                 query = text("""
@@ -139,27 +112,11 @@ class PgVectorStore(VectorStore):
         source_type: Optional[SourceType] = None,
         min_score: float = 0.0,
     ) -> List[RetrievedChunk]:
-        """
-        Search for similar chunks by embedding similarity.
-        
-        Uses cosine similarity via pgvector's <=> operator.
-        
-        Args:
-            query_embedding: Query vector
-            profile_id: Filter results to this profile
-            top_k: Number of results to return
-            source_type: Optional filter by source type
-            min_score: Minimum similarity score threshold (0-1, where 1 is identical)
-            
-        Returns:
-            List of retrieved chunks sorted by similarity (highest first)
-        """
+        """Search for similar chunks by embedding similarity."""
         try:
-            # Convert numpy array to list
             embedding_list = query_embedding.tolist()
             embedding_str = f"[{','.join(map(str, embedding_list))}]"
             
-            # Build query with optional source_type filter
             if source_type:
                 query = text("""
                     SELECT 
@@ -208,7 +165,6 @@ class PgVectorStore(VectorStore):
             result = self.db_session.execute(query, params)
             rows = result.fetchall()
             
-            # Convert to RetrievedChunk objects
             chunks = []
             for row in rows:
                 metadata = ChunkMetadata(
@@ -233,5 +189,5 @@ class PgVectorStore(VectorStore):
             raise
     
     async def get_embedding_dimension(self) -> int:
-        """Return the expected embedding dimension for this store."""
+        """Return the expected embedding dimension."""
         return self.embedding_provider.get_dimension()

@@ -1,10 +1,9 @@
 """
-Error logging middleware for debugging.
+Error logging middleware.
 """
 
 import logging
 import traceback
-from datetime import datetime
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -18,10 +17,9 @@ class ErrorLoggingMiddleware(BaseHTTPMiddleware):
         try:
             response = await call_next(request)
             
-            # Log 4xx and 5xx errors
             if response.status_code >= 400:
                 logger.warning(
-                    f"❌ {response.status_code} | "
+                    f"{response.status_code} | "
                     f"{request.method} {request.url.path} | "
                     f"IP: {request.client.host}"
                 )
@@ -29,9 +27,8 @@ class ErrorLoggingMiddleware(BaseHTTPMiddleware):
             return response
             
         except Exception as e:
-            # Log detailed error
             logger.error(
-                f"🔥 EXCEPTION | "
+                f"EXCEPTION | "
                 f"{request.method} {request.url.path} | "
                 f"IP: {request.client.host} | "
                 f"Error: {str(e)}\n"

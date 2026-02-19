@@ -1,7 +1,5 @@
 """
 Document ingestion for RAG pipeline.
-
-Chunks and embeds profile data for semantic search.
 """
 
 import logging
@@ -26,22 +24,13 @@ logger = logging.getLogger(__name__)
 
 
 class DocumentIngestion:
-    """
-    Handles ingestion of profile data into vector store.
-    """
+    """Handles ingestion of profile data into vector store."""
     
     def __init__(
         self,
         vector_store: VectorStore,
         embedding_provider: EmbeddingProvider,
     ):
-        """
-        Initialize document ingestion.
-        
-        Args:
-            vector_store: Vector store for saving embeddings
-            embedding_provider: Provider for generating embeddings
-        """
         self.vector_store = vector_store
         self.embedding_provider = embedding_provider
     
@@ -50,22 +39,11 @@ class DocumentIngestion:
         profile_id: int,
         db_session: Session,
     ) -> int:
-        """
-        Ingest complete profile data into vector store.
-        
-        Args:
-            profile_id: Profile ID to ingest
-            db_session: Database session
-            
-        Returns:
-            Number of chunks created
-        """
+        """Ingest complete profile data into vector store."""
         logger.info(f"Starting ingestion for profile {profile_id}")
         
-        # Delete existing chunks for this profile (idempotent)
         await self.vector_store.delete_profile_chunks(profile_id)
         
-        # Fetch profile data
         profile = db_session.query(Profile).filter(Profile.id == profile_id).first()
         if not profile:
             logger.warning(f"Profile {profile_id} not found")
@@ -73,7 +51,6 @@ class DocumentIngestion:
         
         all_chunks = []
         
-        # 1. Ingest summary
         if profile.summary:
             chunks = await self._chunk_and_embed_text(
                 text=profile.summary,
@@ -82,7 +59,6 @@ class DocumentIngestion:
             )
             all_chunks.extend(chunks)
         
-        # 2. Ingest skills
         skills = db_session.query(Skill).filter(Skill.profile_id == profile_id).all()
         for skill in skills:
             text = f"{skill.name} ({skill.category}, {skill.proficiency_level})"
@@ -94,7 +70,6 @@ class DocumentIngestion:
             )
             all_chunks.extend(chunks)
         
-        # 3. Ingest experiences
         experiences = db_session.query(Experience).filter(Experience.profile_id == profile_id).all()
         for exp in experiences:
             text = f"{exp.role} at {exp.company}. {exp.description or ''}"
@@ -106,7 +81,6 @@ class DocumentIngestion:
             )
             all_chunks.extend(chunks)
         
-        # 4. Ingest projects
         projects = db_session.query(Project).filter(Project.profile_id == profile_id).all()
         for proj in projects:
             tech_stack = ', '.join(proj.tech_stack) if proj.tech_stack else ''
@@ -119,7 +93,6 @@ class DocumentIngestion:
             )
             all_chunks.extend(chunks)
         
-        # Store all chunks
         if all_chunks:
             await self.vector_store.upsert_chunks(all_chunks, profile_id)
         
@@ -133,25 +106,10 @@ class DocumentIngestion:
         source_type: SourceType,
         source_id: int = None,
     ) -> List[VectorChunk]:
-        """
-        Chunk text and generate embeddings.
-        
-        Args:
-            text: Text to chunk and embed
-            profile_id: Profile ID
-            source_type: Type of source document
-            source_id: Optional source document ID
-            
-        Returns:
-            List of vector chunks with embeddings
-        """
-        # Simple chunking strategy: Split on sentences if text is long
+        """Chunk text and generate embeddings."""
         chunks_text = self._chunk_text(text, max_chunk_size=500)
-        
-        # Generate embeddings for all chunks
         embeddings = await self.embedding_provider.generate_embeddings_batch(chunks_text)
         
-        # Create VectorChunk objects
         vector_chunks = []
         for idx, (chunk_text, embedding) in enumerate(zip(chunks_text, embeddings)):
             metadata = ChunkMetadata(
@@ -171,23 +129,10 @@ class DocumentIngestion:
         return vector_chunks
     
     def _chunk_text(self, text: str, max_chunk_size: int = 500) -> List[str]:
-        """
-        Split text into chunks.
-        
-        Simple strategy: Keep chunks under max_chunk_size characters.
-        Split on periods if possible.
-        
-        Args:
-            text: Text to chunk
-            max_chunk_size: Maximum characters per chunk
-            
-        Returns:
-            List of text chunks
-        """
+        """Split text into chunks."""
         if len(text) <= max_chunk_size:
             return [text]
         
-        # Split on sentences (periods followed by space)
         sentences = text.replace('. ', '.|').split('|')
         
         chunks = []
