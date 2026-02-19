@@ -76,4 +76,4 @@ class Project(Base):
     github_url = Column(String(500), nullable=True)
     demo_url = Column(String(500), nullable=True)
 
-    profile = relationship("Project", back_populates="projects")
+    profile = relationship("Profile", back_populates="projects")  # ✅ FIX: "Project" → "Profile"
