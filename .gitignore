@@ -39,3 +39,4 @@ build/
 # Documentation
 docs/ARCHITECTURE_PROMPT.md
 
+backend/.env
