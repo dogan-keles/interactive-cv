@@ -1,15 +1,18 @@
 """
-Profile Agent implementation - FIXED VERSION
+Profile Agent implementation - OPTIMIZED VERSION
 
 Handles questions about professional skills, experience, and background.
 Uses profile tools and optional semantic search to retrieve data.
 
-CHANGES:
-- Uses session factory instead of global session (thread-safe)
-- Creates and closes sessions properly for each request
+OPTIMIZATIONS:
+- Post-processing to fix language mixing ("siguientes", "quite", etc.)
+- Contact info included in responses
+- Removed skill level mentions
+- Thread-safe session management
 """
 
 import logging
+import re
 from typing import Optional, Callable
 
 from sqlalchemy.orm import Session
@@ -76,11 +79,73 @@ class ProfileAgent:
                 max_tokens=1000,
             )
             
-            return response.strip()
+            # Post-process response to fix language issues
+            cleaned_response = self._clean_response(response.strip(), context.language)
+            
+            return cleaned_response
         
         except Exception as e:
             logger.error(f"ProfileAgent error processing query: {e}", exc_info=True)
             raise
+    
+    def _clean_response(self, response: str, language: Language) -> str:
+        """
+        Clean response to fix language mixing issues.
+        
+        Args:
+            response: Raw response from LLM
+            language: Target language
+            
+        Returns:
+            Cleaned response
+        """
+        # Fix Spanish words in Turkish/English responses
+        replacements = {
+            "siguientes": {
+                Language.TURKISH: "şu",
+                Language.ENGLISH: "following",
+                Language.KURDISH: "ev",
+            },
+            "siguiente": {
+                Language.TURKISH: "şu",
+                Language.ENGLISH: "following",
+                Language.KURDISH: "ev",
+            },
+            # Fix English words in Turkish
+            "quite": {
+                Language.TURKISH: "oldukça",
+            },
+            "following": {
+                Language.TURKISH: "şu",
+                Language.KURDISH: "ev",
+            },
+        }
+        
+        cleaned = response
+        
+        for word, lang_replacements in replacements.items():
+            if language in lang_replacements:
+                # Case-insensitive replacement
+                pattern = re.compile(re.escape(word), re.IGNORECASE)
+                cleaned = pattern.sub(lang_replacements[language], cleaned)
+        
+        # Remove "proficiency" mentions
+        proficiency_patterns = [
+            r'\bproficiency in\b',
+            r'\bproficient in\b',
+            r'\b- proficient\b',
+            r'\buzmanlık seviyem\b',
+            r'\bproficiency level\b',
+        ]
+        
+        for pattern in proficiency_patterns:
+            cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
+        
+        # Clean up extra spaces
+        cleaned = re.sub(r'\s+', ' ', cleaned)
+        cleaned = cleaned.strip()
+        
+        return cleaned
     
     async def _gather_profile_data(
         self,
@@ -106,6 +171,16 @@ class ProfileAgent:
         try:
             query_lower = context.user_query.lower()
             data = {}
+            
+            # Contact info queries
+            if any(keyword in query_lower for keyword in [
+                "contact", "email", "reach", "iletişim", "e-posta", "ulaş",
+                "peywendî", "email"  # Kurdish
+            ]):
+                data["basic_info"] = await profile_tools.get_profile_basic_info(
+                    context.profile_id,
+                    db,
+                )
             
             # Skill-related queries
             if any(keyword in query_lower for keyword in [
@@ -142,7 +217,7 @@ class ProfileAgent:
             # Summary/general queries
             if any(keyword in query_lower for keyword in [
                 "summary", "özet", "background", "geçmiş", 
-                "about", "hakkında", "who", "kim", "tell me",
+                "about", "hakkında", "who", "kim", "tell me", "yourself",
                 "çi", "kî"  # Kurdish
             ]):
                 data["summary"] = await profile_tools.get_profile_summary(
@@ -245,6 +320,8 @@ class ProfileAgent:
             "=" * 80,
             "",
             "⚠️  YOU MUST RESPOND IN THE SAME LANGUAGE AS THE QUESTION ABOVE ⚠️",
+            "⚠️  DO NOT MIX LANGUAGES - Use ONLY the question's language ⚠️",
+            "⚠️  NO Spanish words in Turkish/English! NO English words in Turkish! ⚠️",
             "",
         ]
         
@@ -265,7 +342,7 @@ class ProfileAgent:
                 if info.get('linkedin_url'):
                     prompt_parts.append(f"LinkedIn: {info['linkedin_url']}")
                 if info.get('github_username'):
-                    prompt_parts.append(f"GitHub: {info['github_username']}")
+                    prompt_parts.append(f"GitHub: https://github.com/{info['github_username']}")
                 prompt_parts.append("")
             
             if "summary" in profile_data and profile_data["summary"]:
@@ -274,11 +351,10 @@ class ProfileAgent:
                 prompt_parts.append("")
             
             if "skills" in profile_data and profile_data["skills"]:
-                prompt_parts.append("SKILLS:")
+                prompt_parts.append("SKILLS (do NOT mention proficiency levels):")
                 for skill in profile_data["skills"]:
-                    level = skill.get('proficiency_level', 'N/A')
                     category = skill.get('category', 'N/A')
-                    prompt_parts.append(f"  • {skill['name']} - {level} ({category})")
+                    prompt_parts.append(f"  • {skill['name']} ({category})")
                 prompt_parts.append("")
             
             if "experiences" in profile_data and profile_data["experiences"]:
@@ -323,6 +399,8 @@ class ProfileAgent:
         prompt_parts.append("NOW PROVIDE YOUR ANSWER:")
         prompt_parts.append("━" * 80)
         prompt_parts.append("⚠️  FINAL REMINDER: Use the SAME LANGUAGE as the user's question!")
+        prompt_parts.append("⚠️  DO NOT say 'proficiency' or 'proficient' or skill levels!")
+        prompt_parts.append("⚠️  For contact questions: Include email (dgnkls.47@gmail.com) and LinkedIn!")
         prompt_parts.append("Be professional, accurate, concise, and helpful.")
         prompt_parts.append("")
         

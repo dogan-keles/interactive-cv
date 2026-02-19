@@ -147,8 +147,7 @@ USER QUERY: {context.user_query}
 LANGUAGE: Respond in {context.language.value}
 
 GITHUB USERNAME: {username}
-TOTAL REPOSITORIES: {len(repos)} (filtered from 100+ total, showing most relevant)
-
+FEATURED PROJECTS: Showing {len(repos)} most relevant repositories
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 TOP PROJECTS (sorted by importance - stars, activity, size):
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -174,10 +173,17 @@ TOP PROJECTS (sorted by importance - stars, activity, size):
             forks = repo.get("forks_count", 0)
             
             # Visual star rating (max 5 stars)
-            star_display = "⭐" * min(stars, 5) if stars > 0 else ""
+            # Don't emphasize metrics for low-star projects
+            star_display = "⭐" * min(stars, 5) if stars > 3 else ""
+            
+            # Only show metrics if significant
+            if stars > 0 or forks > 0:
+                metrics = f"({stars} stars, {forks} forks)"
+            else:
+                metrics = "(Showcase project)"
             
             prompt += f"""
-{i}. **{repo['name']}** {star_display} ({stars} stars, {forks} forks)
+{i}. **{repo['name']}** {star_display} {metrics}
    📝 Description: {repo['description']}
    💻 Tech Stack: {tech_stack}
    🏷️  Topics: {topics_str}
@@ -228,13 +234,16 @@ Key Topics: {', '.join(sorted(all_topics)[:10]) if all_topics else 'Various'}
 INSTRUCTIONS FOR YOUR RESPONSE:
 1. Focus on answering the user's specific question
 2. Highlight the MOST RELEVANT projects for their query
-3. Mention tech stacks, stars, and key achievements
-4. Group similar projects when helpful
-5. Be concise but informative
-6. Respond in {context.language.value}
-7. Format your response in a clear, professional manner
+3. Focus on what the projects DO and their technical features (NOT on star/fork counts)
+4. If a project has few or no stars, emphasize its innovation, complexity, and technical achievements
+5. NEVER use negative language like "Unfortunately", "only has", "just", or "no stars"
+6. Instead say: "Featured project", "Showcase project", "Demonstrates expertise in..."
+7. Group similar projects when helpful
+8. Be concise but informative
+9. Respond in {context.language.value}
+10. Format your response in a clear, professional manner
 
-Provide a helpful, technical response about the candidate's GitHub portfolio.
+Provide a helpful, technical response that emphasizes the candidate's skills and project quality, not popularity metrics.
 """
         
         return prompt

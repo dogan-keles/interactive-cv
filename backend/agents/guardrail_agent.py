@@ -210,6 +210,16 @@ Your response:"""
         Returns:
             Polite redirect message in the user's language
         """
+        # Check for nonsense queries (gibberish)
+        query = context.user_query.strip()
+        if len(query) < 3 or (not any(c.isalpha() for c in query)):
+            if context.language == Language.TURKISH:
+                return "Üzgünüm, sorunuzu anlamadım. Adayın yetenekleri, deneyimi veya projeleri hakkında soru sorabilirsiniz."
+            elif context.language == Language.KURDISH:
+                return "Bibore, ez pirsê te fêm nekim. Tu dikarî li ser jêhatî, ezmûn an projeyên namzedî bipirsî."
+            else:
+                return "I'm sorry, I didn't understand your question. You can ask about the candidate's skills, experience, or projects."
+        
         prompt = f"""{GUARDRAIL_AGENT_SYSTEM_PROMPT}
 
 {GUARDRAIL_AGENT_INSTRUCTIONS}
