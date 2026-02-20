@@ -9,15 +9,32 @@ from typing import Optional, Callable
 from sqlalchemy.orm import Session
 
 from backend.infrastructure.llm.provider import BaseLLMProvider
-from backend.orchestrator.types import RequestContext
+from backend.orchestrator.types import RequestContext, Language
 from backend.data_access.vector_db.retrieval import RAGRetrievalPipeline
-from backend.agents.prompts import (
-    PROFILE_AGENT_SYSTEM_PROMPT,
-    PROFILE_AGENT_INSTRUCTIONS,
-)
 from backend.tools import profile_tools
 
 logger = logging.getLogger(__name__)
+
+
+def _get_language_name(lang: Language) -> str:
+    """Convert language enum to readable name."""
+    names = {
+        Language.AUTO: "English",
+        Language.ENGLISH: "English",
+        Language.TURKISH: "Turkish",
+        Language.KURDISH: "Kurdish",
+        Language.GERMAN: "German",
+        Language.FRENCH: "French",
+        Language.SPANISH: "Spanish",
+        Language.ITALIAN: "Italian",
+        Language.PORTUGUESE: "Portuguese",
+        Language.RUSSIAN: "Russian",
+        Language.ARABIC: "Arabic",
+        Language.CHINESE: "Chinese",
+        Language.JAPANESE: "Japanese",
+        Language.KOREAN: "Korean",
+    }
+    return names.get(lang, "English")
 
 
 class ProfileAgent:
@@ -38,11 +55,14 @@ class ProfileAgent:
         try:
             profile_data = await self._gather_profile_data(context)
             rag_context = await self._get_rag_context(context)
-            prompt = self._build_prompt(context, profile_data, rag_context)
+            
+            system_prompt = self._build_system_prompt(context)
+            user_prompt = self._build_user_prompt(context, profile_data, rag_context)
             
             response = await self.llm_provider.generate(
-                prompt=prompt,
-                temperature=0.7,
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+                temperature=0.3,
                 max_tokens=1000,
             )
             
@@ -146,42 +166,64 @@ class ProfileAgent:
             return context.rag_context
         
         try:
-            rag_context = await self.retrieval_pipeline.retrieve_context(
-                query=context.user_query,
-                profile_id=context.profile_id,
-                top_k=3,
-                min_score=0.3,
-            )
+            # Try both possible method names for compatibility
+            if hasattr(self.retrieval_pipeline, 'retrieve'):
+                rag_context = await self.retrieval_pipeline.retrieve(
+                    query=context.user_query,
+                    profile_id=context.profile_id,
+                    top_k=3,
+                    min_score=0.3,
+                )
+            elif hasattr(self.retrieval_pipeline, 'retrieve_context'):
+                rag_context = await self.retrieval_pipeline.retrieve_context(
+                    query=context.user_query,
+                    profile_id=context.profile_id,
+                    top_k=3,
+                    min_score=0.3,
+                )
+            else:
+                logger.warning("RAG pipeline has no retrieve or retrieve_context method")
+                return None
+            
             return rag_context if rag_context else None
         except Exception as e:
             logger.warning(f"RAG retrieval failed: {e}")
             return None
     
-    def _build_prompt(
+    def _build_system_prompt(self, context: RequestContext) -> str:
+        """Build system prompt with strict language enforcement."""
+        lang_name = _get_language_name(context.language)
+        
+        return f"""You are a professional CV assistant for Doğan Keleş.
+
+ABSOLUTE RULES YOU MUST FOLLOW:
+1. RESPOND ONLY IN {lang_name.upper()}. Every single word must be in {lang_name}. No exceptions.
+2. ONLY use information from the profile data provided. Never invent or guess anything.
+3. Always call the candidate "Doğan" or "Doğan Keleş" (never "Don", "Doğn", or "the candidate").
+4. Do NOT mention proficiency levels (no "expert", "advanced", "proficient", "beginner").
+5. Keep answers concise and well-organized.
+6. If information is not in the provided data, say so honestly.
+
+YOU ARE RESPONDING IN: {lang_name.upper()}"""
+    
+    def _build_user_prompt(
         self,
         context: RequestContext,
         profile_data: dict,
         rag_context: Optional[str],
     ) -> str:
-        """Build complete prompt for LLM."""
+        """Build user prompt with profile data."""
+        lang_name = _get_language_name(context.language)
+        
         prompt_parts = [
-            PROFILE_AGENT_SYSTEM_PROMPT,
+            f"Question: {context.user_query}",
             "",
-            PROFILE_AGENT_INSTRUCTIONS,
-            "",
-            "=" * 80,
-            "USER'S QUESTION:",
-            f'"{context.user_query}"',
-            "",
-            "⚠️  RESPOND IN THE SAME LANGUAGE AS THE QUESTION ABOVE",
-            "=" * 80,
-            "",
+            "---",
+            "PROFILE DATA (use ONLY this data to answer):",
+            "---",
         ]
         
         if profile_data:
-            prompt_parts.append("PROFILE DATA:")
-            prompt_parts.append("━" * 80)
-            
             if "basic_info" in profile_data and profile_data["basic_info"]:
                 info = profile_data["basic_info"]
                 prompt_parts.append(f"Name: {info.get('name', 'N/A')}")
@@ -204,13 +246,13 @@ class ProfileAgent:
                 prompt_parts.append("SKILLS:")
                 for skill in profile_data["skills"]:
                     category = skill.get('category', 'N/A')
-                    prompt_parts.append(f"  • {skill['name']} ({category})")
+                    prompt_parts.append(f"  - {skill['name']} ({category})")
                 prompt_parts.append("")
             
             if "experiences" in profile_data and profile_data["experiences"]:
                 prompt_parts.append("WORK EXPERIENCE:")
                 for exp in profile_data["experiences"]:
-                    prompt_parts.append(f"  • {exp['role']} at {exp['company']}")
+                    prompt_parts.append(f"  - {exp['role']} at {exp['company']}")
                     prompt_parts.append(f"    {exp.get('start_date', 'N/A')} - {exp.get('end_date', 'Present')}")
                     if exp.get('description'):
                         prompt_parts.append(f"    {exp['description']}")
@@ -219,23 +261,20 @@ class ProfileAgent:
             if "projects" in profile_data and profile_data["projects"]:
                 prompt_parts.append("PROJECTS:")
                 for proj in profile_data["projects"]:
-                    prompt_parts.append(f"  • {proj['title']}")
+                    prompt_parts.append(f"  - {proj['title']}")
                     if proj.get('description'):
                         prompt_parts.append(f"    {proj['description']}")
                     if proj.get('tech_stack'):
                         tech = ', '.join(proj['tech_stack']) if isinstance(proj['tech_stack'], list) else proj['tech_stack']
                         prompt_parts.append(f"    Technologies: {tech}")
                     prompt_parts.append("")
-            
-            prompt_parts.append("━" * 80)
         
         if rag_context:
-            prompt_parts.append("")
             prompt_parts.append("ADDITIONAL CONTEXT:")
             prompt_parts.append(rag_context)
             prompt_parts.append("")
         
-        prompt_parts.append("")
-        prompt_parts.append("⚠️  REMINDER: Same language as question, no proficiency levels, include contact info if asked")
+        prompt_parts.append("---")
+        prompt_parts.append(f"Answer the question above using ONLY the profile data. Respond in {lang_name}.")
         
         return "\n".join(prompt_parts)

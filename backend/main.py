@@ -26,7 +26,7 @@ load_dotenv()
 from backend.infrastructure.database import SessionLocal, check_connection
 
 # LLM Provider
-from backend.infrastructure.llm.provider import GroqProvider
+from backend.infrastructure.llm.openai_provider import OpenAIProvider
 
 # Agents
 from backend.agents.profile_agent import ProfileAgent
@@ -78,15 +78,12 @@ async def lifespan(app: FastAPI):
         logger.warning("⚠️ Database connection failed - running without DB")
 
     # 2. LLM Provider
-    groq_api_key = os.getenv("GROQ_API_KEY")
-    if not groq_api_key:
-        raise RuntimeError("❌ GROQ_API_KEY is required")
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    if not openai_api_key:
+        raise RuntimeError("❌ OPENAI_API_KEY is required")
 
-    llm_provider = GroqProvider(
-        api_key=groq_api_key,
-        model=os.getenv("LLM_MODEL", "llama-3.3-70b-versatile"),
-    )
-    logger.info("✅ Groq LLM provider initialized")
+    llm_provider = OpenAIProvider(api_key=openai_api_key, model="gpt-4o-mini")
+    logger.info("✅ OpenAI LLM provider initialized")
 
     # 3. RAG (optional) - FIXED: Use temporary session for initialization
     retrieval_pipeline = None

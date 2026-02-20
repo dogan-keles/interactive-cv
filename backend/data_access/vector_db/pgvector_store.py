@@ -125,12 +125,12 @@ class PgVectorStore(VectorStore):
                         source_id,
                         chunk_index,
                         profile_id,
-                        1 - (embedding <=> :query_embedding::vector) AS similarity
+                        1 - (embedding <=> CAST(:query_embedding AS vector)) AS similarity
                     FROM embeddings
                     WHERE profile_id = :profile_id
                     AND source_type = :source_type
-                    AND 1 - (embedding <=> :query_embedding::vector) >= :min_score
-                    ORDER BY embedding <=> :query_embedding::vector
+                    AND 1 - (embedding <=> CAST(:query_embedding AS vector)) >= :min_score
+                    ORDER BY embedding <=> CAST(:query_embedding AS vector)
                     LIMIT :top_k
                 """)
                 params = {
@@ -148,11 +148,11 @@ class PgVectorStore(VectorStore):
                         source_id,
                         chunk_index,
                         profile_id,
-                        1 - (embedding <=> :query_embedding::vector) AS similarity
+                        1 - (embedding <=> CAST(:query_embedding AS vector)) AS similarity
                     FROM embeddings
                     WHERE profile_id = :profile_id
-                    AND 1 - (embedding <=> :query_embedding::vector) >= :min_score
-                    ORDER BY embedding <=> :query_embedding::vector
+                    AND 1 - (embedding <=> CAST(:query_embedding AS vector)) >= :min_score
+                    ORDER BY embedding <=> CAST(:query_embedding AS vector)
                     LIMIT :top_k
                 """)
                 params = {
