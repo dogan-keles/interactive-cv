@@ -239,7 +239,7 @@ YOU ARE RESPONDING IN: {lang_name.upper()}"""
             
             if "summary" in profile_data and profile_data["summary"]:
                 prompt_parts.append("SUMMARY:")
-                prompt_parts.append(profile_data['summary'])
+                prompt_parts.append(str(profile_data['summary']))
                 prompt_parts.append("")
             
             if "skills" in profile_data and profile_data["skills"]:
@@ -255,7 +255,7 @@ YOU ARE RESPONDING IN: {lang_name.upper()}"""
                     prompt_parts.append(f"  - {exp['role']} at {exp['company']}")
                     prompt_parts.append(f"    {exp.get('start_date', 'N/A')} - {exp.get('end_date', 'Present')}")
                     if exp.get('description'):
-                        prompt_parts.append(f"    {exp['description']}")
+                        prompt_parts.append(f"    {str(exp['description'])}")
                     prompt_parts.append("")
             
             if "projects" in profile_data and profile_data["projects"]:
@@ -263,18 +263,25 @@ YOU ARE RESPONDING IN: {lang_name.upper()}"""
                 for proj in profile_data["projects"]:
                     prompt_parts.append(f"  - {proj['title']}")
                     if proj.get('description'):
-                        prompt_parts.append(f"    {proj['description']}")
+                        prompt_parts.append(f"    {str(proj['description'])}")
                     if proj.get('tech_stack'):
-                        tech = ', '.join(proj['tech_stack']) if isinstance(proj['tech_stack'], list) else proj['tech_stack']
+                        # FIX: Ensure tech_stack is always converted to string
+                        tech_stack = proj['tech_stack']
+                        if isinstance(tech_stack, list):
+                            tech = ', '.join(str(t) for t in tech_stack)
+                        else:
+                            tech = str(tech_stack)
                         prompt_parts.append(f"    Technologies: {tech}")
                     prompt_parts.append("")
         
         if rag_context:
             prompt_parts.append("ADDITIONAL CONTEXT:")
-            prompt_parts.append(rag_context)
+            # FIX: Ensure rag_context is string
+            prompt_parts.append(str(rag_context))
             prompt_parts.append("")
         
         prompt_parts.append("---")
         prompt_parts.append(f"Answer the question above using ONLY the profile data. Respond in {lang_name}.")
         
-        return "\n".join(prompt_parts)
+        # FIX: Final safety check - convert all parts to string
+        return "\n".join(str(part) for part in prompt_parts)
