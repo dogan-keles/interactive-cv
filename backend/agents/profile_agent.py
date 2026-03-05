@@ -4,7 +4,8 @@ Profile Agent - Handles questions about professional skills, experience, and bac
 
 import logging
 import re
-from typing import Optional, Callable
+from typing import Optional, Callable, Dict, List, Any
+from collections import defaultdict
 
 from sqlalchemy.orm import Session
 
@@ -19,20 +20,11 @@ logger = logging.getLogger(__name__)
 def _get_language_name(lang: Language) -> str:
     """Convert language enum to readable name."""
     names = {
-        Language.AUTO: "English",
-        Language.ENGLISH: "English",
-        Language.TURKISH: "Turkish",
-        Language.KURDISH: "Kurdish",
-        Language.GERMAN: "German",
-        Language.FRENCH: "French",
-        Language.SPANISH: "Spanish",
-        Language.ITALIAN: "Italian",
-        Language.PORTUGUESE: "Portuguese",
-        Language.RUSSIAN: "Russian",
-        Language.ARABIC: "Arabic",
-        Language.CHINESE: "Chinese",
-        Language.JAPANESE: "Japanese",
-        Language.KOREAN: "Korean",
+        Language.AUTO: "English", Language.ENGLISH: "English", Language.TURKISH: "Turkish",
+        Language.KURDISH: "Kurdish", Language.GERMAN: "German", Language.FRENCH: "French",
+        Language.SPANISH: "Spanish", Language.ITALIAN: "Italian", Language.PORTUGUESE: "Portuguese",
+        Language.RUSSIAN: "Russian", Language.ARABIC: "Arabic", Language.CHINESE: "Chinese",
+        Language.JAPANESE: "Japanese", Language.KOREAN: "Korean",
     }
     return names.get(lang, "English")
 
@@ -74,214 +66,172 @@ class ProfileAgent:
     
     def _clean_response(self, response: str) -> str:
         """Remove proficiency mentions and clean spacing."""
-        proficiency_patterns = [
-            r'\bproficiency in\b',
-            r'\bproficient in\b',
-        ]
-        
         cleaned = response
-        for pattern in proficiency_patterns:
+        for pattern in [r'\bproficiency in\b', r'\bproficient in\b']:
             cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
-        
         return re.sub(r'\s+', ' ', cleaned).strip()
     
-    async def _gather_profile_data(self, context: RequestContext) -> dict:
-        """Gather relevant profile data using tools."""
+    async def _gather_profile_data(self, context: RequestContext) -> Dict[str, Any]:
+        """Gather all profile data - let LLM decide what's relevant."""
         if not self.db_session_factory:
-            logger.warning("No database session factory available")
             return {}
         
         db = self.db_session_factory()
         
         try:
-            query_lower = context.user_query.lower()
-            data = {}
+            data = {
+                "basic_info": await profile_tools.get_profile_basic_info(context.profile_id, db),
+                "summary": await profile_tools.get_profile_summary(context.profile_id, db),
+                "skills": await profile_tools.get_profile_skills(context.profile_id, db),
+                "experiences": await profile_tools.get_profile_experiences(context.profile_id, db),
+                "projects": await profile_tools.get_profile_projects(context.profile_id, db),
+            }
             
-            contact_keywords = [
-                "contact", "email", "reach", "iletişim", "e-posta", "ulaş", "peywendî"
-            ]
-            if any(k in query_lower for k in contact_keywords):
-                data["basic_info"] = await profile_tools.get_profile_basic_info(
-                    context.profile_id, db
-                )
-            
-            skill_keywords = [
-                "skill", "yetenek", "teknoloji", "technology", "expertise", 
-                "uzmanlık", "know", "biliyor", "can", "dizane", "jêhatî"
-            ]
-            if any(k in query_lower for k in skill_keywords):
-                data["skills"] = await profile_tools.get_profile_skills(
-                    context.profile_id, db
-                )
-            
-            experience_keywords = [
-                "experience", "deneyim", "work", "iş", "career", "kariyer", 
-                "job", "pozisyon", "company", "şirket", "worked", "kar", "ezmûn"
-            ]
-            if any(k in query_lower for k in experience_keywords):
-                data["experiences"] = await profile_tools.get_profile_experiences(
-                    context.profile_id, db
-                )
-            
-            project_keywords = [
-                "project", "proje", "portfolio", "built", "created", 
-                "developed", "çalışma"
-            ]
-            if any(k in query_lower for k in project_keywords):
-                data["projects"] = await profile_tools.get_profile_projects(
-                    context.profile_id, db
-                )
-            
-            summary_keywords = [
-                "summary", "özet", "background", "geçmiş", "about", 
-                "hakkında", "who", "kim", "tell me", "yourself", "çi", "kî"
-            ]
-            if any(k in query_lower for k in summary_keywords):
-                data["summary"] = await profile_tools.get_profile_summary(
-                    context.profile_id, db
-                )
-            
-            if not data:
-                data["basic_info"] = await profile_tools.get_profile_basic_info(
-                    context.profile_id, db
-                )
-                data["summary"] = await profile_tools.get_profile_summary(
-                    context.profile_id, db
-                )
-                data["skills"] = await profile_tools.get_profile_skills(
-                    context.profile_id, db
-                )
+            logger.info(f"Gathered profile data: {len(data.get('skills', []))} skills, "
+                       f"{len(data.get('experiences', []))} experiences, "
+                       f"{len(data.get('projects', []))} projects")
             
             return data
-        
         finally:
             db.close()
     
     async def _get_rag_context(self, context: RequestContext) -> Optional[str]:
-        """Get RAG context via semantic search if available."""
-        if not self.retrieval_pipeline:
-            return None
-        
-        if context.rag_context:
+        """Get RAG context via semantic search."""
+        if not self.retrieval_pipeline or context.rag_context:
             return context.rag_context
         
         try:
-            # Try both possible method names for compatibility
             if hasattr(self.retrieval_pipeline, 'retrieve'):
-                rag_context = await self.retrieval_pipeline.retrieve(
+                return await self.retrieval_pipeline.retrieve(
                     query=context.user_query,
                     profile_id=context.profile_id,
                     top_k=3,
                     min_score=0.3,
                 )
             elif hasattr(self.retrieval_pipeline, 'retrieve_context'):
-                rag_context = await self.retrieval_pipeline.retrieve_context(
+                return await self.retrieval_pipeline.retrieve_context(
                     query=context.user_query,
                     profile_id=context.profile_id,
                     top_k=3,
                     min_score=0.3,
                 )
-            else:
-                logger.warning("RAG pipeline has no retrieve or retrieve_context method")
-                return None
-            
-            return rag_context if rag_context else None
         except Exception as e:
             logger.warning(f"RAG retrieval failed: {e}")
-            return None
+        
+        return None
     
     def _build_system_prompt(self, context: RequestContext) -> str:
-        """Build system prompt with strict language enforcement."""
+        """Build system prompt with LLM instructions."""
         lang_name = _get_language_name(context.language)
         
         return f"""You are a professional CV assistant for Doğan Keleş.
 
-ABSOLUTE RULES YOU MUST FOLLOW:
-1. RESPOND ONLY IN {lang_name.upper()}. Every single word must be in {lang_name}. No exceptions.
-2. ONLY use information from the profile data provided. Never invent or guess anything.
-3. Always call the candidate "Doğan" or "Doğan Keleş" (never "Don", "Doğn", or "the candidate").
-4. Do NOT mention proficiency levels (no "expert", "advanced", "proficient", "beginner").
-5. Keep answers concise and well-organized.
-6. If information is not in the provided data, say so honestly.
+CRITICAL RULES:
+1. Respond ONLY in {lang_name.upper()}.
+2. Use ONLY the provided profile data. Never invent information.
+3. When asked about a specific company/project, focus ONLY on that item.
+4. Use "Doğan" or "Doğan Keleş" (never "the candidate").
+5. Do NOT mention proficiency levels.
+
+⚠️  SKILL LISTING RULE (VERY IMPORTANT):
+When asked about skills, you MUST use the category summaries from the data.
+CORRECT: "Backend: Python, Java, Spring Boot (+5 more), Database: PostgreSQL, Redis (+3 more)"
+WRONG: Listing all 64 skills individually like "Python, Java, Spring Boot, ASP.NET, Node.js..."
+
+Use the format provided in the data. If a category has "+X more", keep it that way.
+
+6. If information is missing, say so honestly.
 
 YOU ARE RESPONDING IN: {lang_name.upper()}"""
     
     def _build_user_prompt(
         self,
         context: RequestContext,
-        profile_data: dict,
+        profile_data: Dict[str, Any],
         rag_context: Optional[str],
     ) -> str:
-        """Build user prompt with profile data."""
+        """Build user prompt with all profile data."""
         lang_name = _get_language_name(context.language)
         
         prompt_parts = [
             f"Question: {context.user_query}",
             "",
             "---",
-            "PROFILE DATA (use ONLY this data to answer):",
+            "PROFILE DATA:",
             "---",
         ]
         
-        if profile_data:
-            if "basic_info" in profile_data and profile_data["basic_info"]:
-                info = profile_data["basic_info"]
-                prompt_parts.append(f"Name: {info.get('name', 'N/A')}")
-                if info.get('email'):
-                    prompt_parts.append(f"Email: {info['email']}")
-                if info.get('location'):
-                    prompt_parts.append(f"Location: {info['location']}")
-                if info.get('linkedin_url'):
-                    prompt_parts.append(f"LinkedIn: {info['linkedin_url']}")
-                if info.get('github_username'):
-                    prompt_parts.append(f"GitHub: https://github.com/{info['github_username']}")
-                prompt_parts.append("")
-            
-            if "summary" in profile_data and profile_data["summary"]:
-                prompt_parts.append("SUMMARY:")
-                prompt_parts.append(str(profile_data['summary']))
-                prompt_parts.append("")
-            
-            if "skills" in profile_data and profile_data["skills"]:
-                prompt_parts.append("SKILLS:")
-                for skill in profile_data["skills"]:
-                    category = skill.get('category', 'N/A')
-                    prompt_parts.append(f"  - {skill['name']} ({category})")
-                prompt_parts.append("")
-            
-            if "experiences" in profile_data and profile_data["experiences"]:
-                prompt_parts.append("WORK EXPERIENCE:")
-                for exp in profile_data["experiences"]:
-                    prompt_parts.append(f"  - {exp['role']} at {exp['company']}")
-                    prompt_parts.append(f"    {exp.get('start_date', 'N/A')} - {exp.get('end_date', 'Present')}")
-                    if exp.get('description'):
-                        prompt_parts.append(f"    {str(exp['description'])}")
-                    prompt_parts.append("")
-            
-            if "projects" in profile_data and profile_data["projects"]:
-                prompt_parts.append("PROJECTS:")
-                for proj in profile_data["projects"]:
-                    prompt_parts.append(f"  - {proj['title']}")
-                    if proj.get('description'):
-                        prompt_parts.append(f"    {str(proj['description'])}")
-                    if proj.get('tech_stack'):
-                        # FIX: Ensure tech_stack is always converted to string
-                        tech_stack = proj['tech_stack']
-                        if isinstance(tech_stack, list):
-                            tech = ', '.join(str(t) for t in tech_stack)
-                        else:
-                            tech = str(tech_stack)
-                        prompt_parts.append(f"    Technologies: {tech}")
-                    prompt_parts.append("")
+        # Basic info
+        if profile_data.get("basic_info"):
+            info = profile_data["basic_info"]
+            prompt_parts.append(f"Name: {info.get('name', 'N/A')}")
+            if info.get('email'):
+                prompt_parts.append(f"Email: {info['email']}")
+            if info.get('location'):
+                prompt_parts.append(f"Location: {info['location']}")
+            if info.get('linkedin_url'):
+                prompt_parts.append(f"LinkedIn: {info['linkedin_url']}")
+            if info.get('github_username'):
+                prompt_parts.append(f"GitHub: https://github.com/{info['github_username']}")
+            prompt_parts.append("")
         
+        # Summary
+        if profile_data.get("summary"):
+            prompt_parts.append("SUMMARY:")
+            prompt_parts.append(str(profile_data['summary']))
+            prompt_parts.append("")
+        
+        # Skills (grouped by category with smart summarization)
+        if profile_data.get("skills"):
+            skills_by_cat = defaultdict(list)
+            for skill in profile_data["skills"]:
+                skills_by_cat[skill.get('category', 'Other')].append(skill['name'])
+            
+            prompt_parts.append("SKILLS (use these category summaries when answering):")
+            for cat, skills_list in sorted(skills_by_cat.items()):
+                if len(skills_list) > 10:
+                    shown = ', '.join(skills_list[:10])
+                    prompt_parts.append(f"  {cat}: {shown} (+{len(skills_list)-10} more)")
+                else:
+                    prompt_parts.append(f"  {cat}: {', '.join(skills_list)}")
+            prompt_parts.append("")
+        
+        # Experiences
+        if profile_data.get("experiences"):
+            prompt_parts.append("WORK EXPERIENCE:")
+            for exp in profile_data["experiences"]:
+                prompt_parts.append(f"  Company: {exp['company']}")
+                prompt_parts.append(f"  Role: {exp['role']}")
+                prompt_parts.append(f"  Period: {exp.get('start_date', 'N/A')} - {exp.get('end_date', 'Present')}")
+                if exp.get('location'):
+                    prompt_parts.append(f"  Location: {exp['location']}")
+                if exp.get('description'):
+                    prompt_parts.append(f"  Details: {str(exp['description'])}")
+                prompt_parts.append("")
+        
+        # Projects
+        if profile_data.get("projects"):
+            prompt_parts.append("PROJECTS:")
+            for proj in profile_data["projects"]:
+                prompt_parts.append(f"  - {proj['title']}")
+                if proj.get('description'):
+                    prompt_parts.append(f"    {str(proj['description'])}")
+                if proj.get('tech_stack'):
+                    tech = proj['tech_stack']
+                    tech_str = ', '.join(str(t) for t in tech) if isinstance(tech, list) else str(tech)
+                    prompt_parts.append(f"    Tech: {tech_str}")
+                if proj.get('demo_url'):
+                    prompt_parts.append(f"    URL: {proj['demo_url']}")
+                prompt_parts.append("")
+        
+        # RAG context
         if rag_context:
             prompt_parts.append("ADDITIONAL CONTEXT:")
-            # FIX: Ensure rag_context is string
             prompt_parts.append(str(rag_context))
             prompt_parts.append("")
         
         prompt_parts.append("---")
-        prompt_parts.append(f"Answer the question above using ONLY the profile data. Respond in {lang_name}.")
+        prompt_parts.append(f"Answer the question using ONLY the data above. Respond in {lang_name}.")
+        prompt_parts.append("REMEMBER: For skills, use the category summaries format shown above!")
         
-        # FIX: Final safety check - convert all parts to string
         return "\n".join(str(part) for part in prompt_parts)

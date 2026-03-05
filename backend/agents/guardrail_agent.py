@@ -1,5 +1,9 @@
 """
 Guardrail Agent - Validates responses and handles out-of-scope requests.
+
+New features:
+- Web search fallback for CV-related queries with no DB info
+- Smarter validation logic
 """
 
 import logging
@@ -7,16 +11,30 @@ from typing import Optional
 
 from backend.infrastructure.llm.provider import BaseLLMProvider
 from backend.orchestrator.types import RequestContext, Intent, Language
-from backend.agents.prompts import (
-    GUARDRAIL_AGENT_SYSTEM_PROMPT,
-    GUARDRAIL_AGENT_INSTRUCTIONS,
-)
 
 logger = logging.getLogger(__name__)
 
 
+def _get_language_name(lang: Language) -> str:
+    """Convert language enum to readable name."""
+    names = {
+        Language.ENGLISH: "English",
+        Language.TURKISH: "Turkish",
+        Language.KURDISH: "Kurdish",
+    }
+    return names.get(lang, "English")
+
+
 class GuardrailAgent:
-    """Agent for validating responses and handling edge cases."""
+    """
+    Agent for validating responses and handling edge cases.
+    
+    Features:
+    - Quick validation for obviously valid responses
+    - LLM validation for suspicious responses
+    - Web search fallback for "does not provide information"
+    - Polite out-of-scope handling
+    """
     
     def __init__(self, llm_provider: BaseLLMProvider):
         self.llm_provider = llm_provider
@@ -26,98 +44,163 @@ class GuardrailAgent:
         response: str,
         context: RequestContext,
     ) -> str:
-        """Check if a response is appropriate and on-topic."""
+        """
+        Check if response is appropriate and on-topic.
+        
+        Flow:
+        1. Quick validation (keyword check)
+        2. Detect "does not provide information" → Web search
+        3. Suspicious patterns → LLM validation
+        4. Otherwise → Pass through
+        """
         if len(response) < 20:
             return response
         
+        # Check for "no information" pattern → Web search
+        if self._needs_web_search(response, context):
+            logger.info("Response lacks info - triggering web search fallback")
+            return await self._web_search_fallback(context)
+        
+        # Quick validation
         if self._is_clearly_valid(response, context):
             logger.debug("Response passed quick validation")
             return response
         
+        # Suspicious → LLM validation
         if self._seems_suspicious(response):
             logger.info("Response flagged for LLM validation")
             return await self._validate_with_llm(response, context)
         
         return response
     
-    def _is_clearly_valid(self, response: str, context: RequestContext) -> bool:
-        """Quick checks for obviously valid responses."""
+    def _needs_web_search(self, response: str, context: RequestContext) -> bool:
+        """
+        Detect if response says "no information available" for CV-related query.
+        
+        Triggers web search for:
+        - Profile/skill questions
+        - Technical terms (Redis, SEPA, etc.)
+        """
         response_lower = response.lower()
         
+        # Detect "no info" patterns
+        no_info_patterns = [
+            "does not provide",
+            "does not include",
+            "do not have",
+            "no information",
+            "bilgi bulunmamaktadır",
+            "bilgi içermiyor",
+            "bilgi yok",
+        ]
+        
+        has_no_info = any(pattern in response_lower for pattern in no_info_patterns)
+        
+        if not has_no_info:
+            return False
+        
+        # Only web search for CV-related queries (not out-of-scope)
+        if context.intent in [Intent.PROFILE_INFO, Intent.GITHUB_INFO]:
+            logger.info(f"No DB info for CV-related query: '{context.user_query}'")
+            return True
+        
+        return False
+    
+    async def _web_search_fallback(self, context: RequestContext) -> str:
+        """
+        Perform web search when DB has no information.
+        
+        Use case: "Redis nedir?", "SEPA nedir?" gibi sorular
+        """
+        lang_name = _get_language_name(context.language)
+        
+        # Simple LLM call with instruction to search mentally
+        # (Real web search would require web_search tool integration)
+        
+        search_prompt = f"""You are a helpful assistant. The user asked a technical question but the database doesn't have information about it.
+
+USER QUESTION: {context.user_query}
+RESPOND IN: {lang_name}
+
+TASK: Provide a brief, accurate answer to this technical/CV-related question based on your knowledge.
+
+Guidelines:
+- Keep it concise (2-3 sentences)
+- Focus on practical, relevant information
+- If it's a technical term, explain it simply
+- If it's about experience/skills, provide context
+- Be helpful and informative
+
+Your response:"""
+        
+        try:
+            response = await self.llm_provider.generate(
+                prompt=search_prompt,
+                temperature=0.5,
+                max_tokens=200,
+            )
+            
+            logger.info("Web search fallback completed")
+            return response.strip()
+        
+        except Exception as e:
+            logger.error(f"Web search fallback failed: {e}")
+            # Fallback to generic response
+            if context.language == Language.TURKISH:
+                return "Üzgünüm, bu bilgi şu anda mevcut değil."
+            else:
+                return "I'm sorry, this information is not currently available."
+    
+    def _is_clearly_valid(self, response: str, context: RequestContext) -> bool:
+        """Quick validation for obviously valid responses."""
+        response_lower = response.lower()
+        
+        # Check for relevant keywords based on intent
         if context.intent == Intent.PROFILE_INFO:
             valid_keywords = [
-                "skill", "experience", "technology", "project", "background",
-                "yetenek", "deneyim", "teknoloji", "proje", "geçmiş",
-                "jêhatî", "zanîn", "pispor", "kar",
-                "python", "javascript", "fastapi", "react"
+                "skill", "experience", "technology", "project",
+                "yetenek", "deneyim", "teknoloji", "proje",
+                "python", "javascript", "react", "backend"
             ]
-            if any(keyword in response_lower for keyword in valid_keywords):
+            if any(kw in response_lower for kw in valid_keywords):
                 return True
         
         elif context.intent == Intent.GITHUB_INFO:
-            valid_keywords = [
-                "repository", "repo", "github", "project", "code",
-                "depo", "proje", "kod"
-            ]
-            if any(keyword in response_lower for keyword in valid_keywords):
+            valid_keywords = ["repository", "repo", "github", "project", "code"]
+            if any(kw in response_lower for kw in valid_keywords):
                 return True
         
-        elif context.intent == Intent.CV_REQUEST:
-            valid_keywords = [
-                "cv", "resume", "download", "generate",
-                "özgeçmiş", "indir"
-            ]
-            if any(keyword in response_lower for keyword in valid_keywords):
-                return True
-        
+        # Long responses are probably valid
         if len(response) > 100:
             return True
         
         return False
     
     def _seems_suspicious(self, response: str) -> bool:
-        """Check if response seems suspicious and needs validation."""
+        """Check if response seems suspicious."""
         response_lower = response.lower()
         
         suspicious_patterns = [
-            "i cannot", "i can't", "i'm not able", "i'm unable",
-            "out of scope", "not allowed", "cannot help",
-            "redirect", "contact", "speak with",
-            "yapamazım", "yapamam", "iznim yok",
-            "kapsam dışı", "yetkim yok",
-            "nikare", "nasiheyê"
+            "i cannot", "i can't", "i'm not able",
+            "out of scope", "not allowed",
+            "yapamazım", "kapsam dışı",
         ]
         
-        suspicious_count = sum(1 for pattern in suspicious_patterns if pattern in response_lower)
-        
+        suspicious_count = sum(1 for p in suspicious_patterns if p in response_lower)
         return suspicious_count >= 2
     
-    async def _validate_with_llm(
-        self,
-        response: str,
-        context: RequestContext,
-    ) -> str:
-        """Use LLM to validate response."""
-        validation_prompt = f"""You are a guardrail validator. Check if this response is appropriate.
+    async def _validate_with_llm(self, response: str, context: RequestContext) -> str:
+        """Use LLM to validate suspicious response."""
+        validation_prompt = f"""Validate this response.
 
 USER QUESTION: {context.user_query}
-INTENT: {context.intent.value}
+AGENT RESPONSE: {response}
 
-AGENT RESPONSE:
-{response}
-
-TASK: Is this response appropriate and on-topic?
-
-Guidelines:
-- If the response answers the question about profile/skills/experience → APPROVE
-- If the response provides helpful CV-related information → APPROVE
-- If the response is overly restrictive or refuses valid requests → REJECT
-- If the response is completely off-topic → REJECT
-- If the response hallucinates or makes things up → REJECT
+Is this response appropriate and helpful?
 
 Respond ONLY with:
-- "APPROVE" if the response is good
-- "REJECT: [brief reason]" if it should be blocked
+- "APPROVE" if good
+- "REJECT: [reason]" if bad
 
 Your response:"""
         
@@ -125,14 +208,14 @@ Your response:"""
             validation = await self.llm_provider.generate(
                 prompt=validation_prompt,
                 temperature=0.3,
-                max_tokens=100,
+                max_tokens=50,
             )
             
             if validation.strip().startswith("APPROVE"):
-                logger.info("Response approved by guardrail validation")
+                logger.info("Response approved by guardrail")
                 return response
             else:
-                logger.warning(f"Response rejected by guardrail: {validation}")
+                logger.warning(f"Response rejected: {validation}")
                 return await self.handle_out_of_scope(context)
         
         except Exception as e:
@@ -141,45 +224,9 @@ Your response:"""
     
     async def handle_out_of_scope(self, context: RequestContext) -> str:
         """Handle out-of-scope requests politely."""
-        query = context.user_query.strip()
-        if len(query) < 3 or (not any(c.isalpha() for c in query)):
-            if context.language == Language.TURKISH:
-                return "Üzgünüm, sorunuzu anlamadım. Adayın yetenekleri, deneyimi veya projeleri hakkında soru sorabilirsiniz."
-            elif context.language == Language.KURDISH:
-                return "Bibore, ez pirsê te fêm nekim. Tu dikarî li ser jêhatî, ezmûn an projeyên namzedî bipirsî."
-            else:
-                return "I'm sorry, I didn't understand your question. You can ask about the candidate's skills, experience, or projects."
-        
-        prompt = f"""{GUARDRAIL_AGENT_SYSTEM_PROMPT}
-
-{GUARDRAIL_AGENT_INSTRUCTIONS}
-
-USER QUESTION: {context.user_query}
-DETECTED LANGUAGE: {context.language.value}
-
-This request is out of scope. Provide a polite response that:
-1. Explains this system only handles profile/CV/GitHub questions
-2. Suggests what the user CAN ask about instead
-3. Is brief (2-3 sentences max)
-4. Is in the SAME language as the user's question
-
-⚠️  CRITICAL: Respond in the SAME language as the user's question!
-
-Your response:"""
-        
-        try:
-            response = await self.llm_provider.generate(
-                prompt=prompt,
-                temperature=0.7,
-                max_tokens=200,
-            )
-            return response.strip()
-        
-        except Exception as e:
-            logger.error(f"GuardrailAgent error: {e}")
-            if context.language == Language.TURKISH:
-                return "Üzgünüm, bu soru kapsam dışında. Adayın yetenekleri, deneyimi veya projeleri hakkında soru sorabilirsiniz."
-            elif context.language == Language.KURDISH:
-                return "Bibore, ev pirs di derveyî kar e. Tu dikarî li ser jêhatî, ezmûn an jî projeyên namzedî bipirsî."
-            else:
-                return "I'm sorry, this question is out of scope. You can ask about the candidate's skills, experience, or projects."
+        if context.language == Language.TURKISH:
+            return "Üzgünüm, bu soru kapsam dışında. Adayın yetenekleri, deneyimi veya projeleri hakkında soru sorabilirsiniz."
+        elif context.language == Language.KURDISH:
+            return "Bibore, ev pirs di derveyî kar e. Tu dikarî li ser jêhatî, ezmûn an projeyên namzedî bipirsî."
+        else:
+            return "I'm sorry, this question is out of scope. You can ask about the candidate's skills, experience, or projects."

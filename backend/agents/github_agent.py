@@ -1,22 +1,43 @@
 """
 GitHub Agent - Handles questions about GitHub repositories and projects.
+
+Priority:
+1. Database projects (includes all projects like Rebero)
+2. GitHub API repos (supplementary information)
 """
 
 import logging
-from typing import Optional, Callable
+from typing import Optional, Callable, Dict, List, Any
 
 from sqlalchemy.orm import Session
 
 from backend.infrastructure.llm.provider import BaseLLMProvider
-from backend.orchestrator.types import RequestContext
+from backend.orchestrator.types import RequestContext, Language
 from backend.data_access.vector_db.retrieval import RAGRetrievalPipeline
-from backend.tools import github_tools
+from backend.tools import github_tools, profile_tools
 
 logger = logging.getLogger(__name__)
 
 
+def _get_language_name(lang: Language) -> str:
+    """Convert language enum to readable name."""
+    names = {
+        Language.ENGLISH: "English",
+        Language.TURKISH: "Turkish",
+        Language.KURDISH: "Kurdish",
+    }
+    return names.get(lang, "English")
+
+
 class GitHubAgent:
-    """Agent for handling GitHub-related queries."""
+    """
+    Agent for handling GitHub and project-related queries.
+    
+    Strategy:
+    - Fetch DB projects first (authoritative, includes all projects)
+    - Fetch GitHub repos as supplementary data
+    - LLM combines both sources intelligently
+    """
 
     def __init__(
         self,
@@ -29,15 +50,15 @@ class GitHubAgent:
         self.retrieval_pipeline = retrieval_pipeline
 
     async def process(self, context: RequestContext) -> str:
-        """Process GitHub-related query."""
-        if self.db_session_factory is None:
-            return "GitHub data is not available. Database connection is required."
+        """Process GitHub/project-related query."""
+        if not self.db_session_factory:
+            return "Project data is not available. Database connection is required."
 
         db = self.db_session_factory()
         
         try:
-            github_data = await self._gather_github_data(context, db)
-            prompt = self._build_prompt(context, github_data)
+            project_data = await self._gather_project_data(context, db)
+            prompt = self._build_prompt(context, project_data)
             
             response = await self.llm_provider.generate(
                 prompt=prompt,
@@ -48,139 +69,147 @@ class GitHubAgent:
             return response.strip()
         
         except Exception as e:
-            logger.error(f"GitHubAgent error processing query: {e}", exc_info=True)
+            logger.error(f"GitHubAgent error: {e}", exc_info=True)
             raise
         
         finally:
             db.close()
 
-    async def _gather_github_data(self, context: RequestContext, db: Session) -> dict:
-        """Gather GitHub repository data."""
+    async def _gather_project_data(self, context: RequestContext, db: Session) -> Dict[str, Any]:
+        """
+        Gather project data from both Database and GitHub.
+        
+        Priority:
+        1. Database projects (includes Rebero, etc.)
+        2. GitHub repos (supplementary)
+        """
+        # Get DB projects first (authoritative source)
+        db_projects = await profile_tools.get_profile_projects(
+            profile_id=context.profile_id,
+            db_session=db
+        )
+        
+        # Get GitHub data
+        github_username = await github_tools.get_profile_github_username(
+            profile_id=context.profile_id,
+            db_session=db
+        )
+        
+        github_repos = await github_tools.get_github_repositories(
+            profile_id=context.profile_id,
+            db_session=db,
+            max_repos=15,
+            min_stars=0,
+            include_forks=False,
+        )
+        
+        logger.info(f"Gathered {len(db_projects or [])} DB projects, "
+                   f"{len(github_repos or [])} GitHub repos for {github_username}")
+        
         return {
-            "username": await github_tools.get_profile_github_username(
-                profile_id=context.profile_id,
-                db_session=db,
-            ),
-            "repositories": await github_tools.get_github_repositories(
-                profile_id=context.profile_id,
-                db_session=db,
-                max_repos=15,
-                min_stars=0,
-                include_forks=False,
-            ),
+            "db_projects": db_projects or [],
+            "github_username": github_username,
+            "github_repos": github_repos or [],
         }
 
     def _build_prompt(
         self,
         context: RequestContext,
-        github_data: dict,
+        project_data: Dict[str, Any],
     ) -> str:
-        """Build prompt for LLM with GitHub data context."""
-        repos = github_data.get("repositories", [])
-        username = github_data.get("username", "Unknown")
+        """Build comprehensive prompt with DB projects + GitHub repos."""
+        lang_name = _get_language_name(context.language)
         
-        if not repos:
-            return f"""You are a GitHub portfolio assistant.
-
-USER QUERY: {context.user_query}
-LANGUAGE: Respond in {context.language.value}
-
-No GitHub repositories found for this profile.
-"""
+        db_projects = project_data.get("db_projects", [])
+        github_repos = project_data.get("github_repos", [])
+        username = project_data.get("github_username", "Unknown")
         
-        prompt = f"""You are a GitHub portfolio assistant presenting the candidate's most important projects.
-
-USER QUERY: {context.user_query}
-LANGUAGE: Respond in {context.language.value}
-
-GITHUB USERNAME: {username}
-FEATURED PROJECTS: Showing {len(repos)} most relevant repositories
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-TOP PROJECTS (sorted by importance - stars, activity, size):
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-"""
+        prompt_parts = [
+            f"You are a project portfolio assistant for {username}.",
+            "",
+            f"USER QUESTION: {context.user_query}",
+            f"RESPOND IN: {lang_name}",
+            "",
+            "=" * 60,
+            "PROJECT DATA (use this to answer):",
+            "=" * 60,
+            "",
+        ]
         
-        top_count = min(5, len(repos))
-        
-        for i, repo in enumerate(repos[:top_count], 1):
-            languages = repo.get("languages", [])
-            if not languages and repo.get("language"):
-                languages = [repo.get("language")]
-            tech_stack = ", ".join(languages) if languages else "Not specified"
+        # DATABASE PROJECTS (Priority 1 - Most Important)
+        if db_projects:
+            prompt_parts.append("📋 FEATURED PROJECTS (from portfolio database):")
+            prompt_parts.append("These are the PRIMARY projects - use these first!")
+            prompt_parts.append("")
             
-            topics = repo.get("topics", [])
-            topics_str = ", ".join(topics) if topics else "None"
-            
-            stars = repo.get("stargazers_count", 0)
-            forks = repo.get("forks_count", 0)
-            
-            star_display = "⭐" * min(stars, 5) if stars > 3 else ""
-            
-            if stars > 0 or forks > 0:
-                metrics = f"({stars} stars, {forks} forks)"
-            else:
-                metrics = "(Showcase project)"
-            
-            prompt += f"""
-{i}. **{repo['name']}** {star_display} {metrics}
-   📝 Description: {repo['description']}
-   💻 Tech Stack: {tech_stack}
-   🏷️  Topics: {topics_str}
-   🔗 URL: {repo['html_url']}
-   📅 Last Updated: {repo.get('updated_at', 'N/A')[:10]}
-
-"""
+            for i, proj in enumerate(db_projects, 1):
+                prompt_parts.append(f"{i}. **{proj.get('title', 'Untitled')}**")
+                
+                if proj.get('description'):
+                    prompt_parts.append(f"   Description: {proj['description']}")
+                
+                if proj.get('tech_stack'):
+                    tech = proj['tech_stack']
+                    tech_str = ', '.join(str(t) for t in tech) if isinstance(tech, list) else str(tech)
+                    prompt_parts.append(f"   Tech Stack: {tech_str}")
+                
+                if proj.get('demo_url'):
+                    prompt_parts.append(f"   Live Demo: {proj['demo_url']}")
+                
+                if proj.get('github_url'):
+                    prompt_parts.append(f"   GitHub: {proj['github_url']}")
+                
+                prompt_parts.append("")
         
-        if len(repos) > top_count:
-            remaining = repos[top_count:]
-            prompt += f"""━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ADDITIONAL PROJECTS ({len(remaining)}):
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-"""
-            by_language = {}
-            for repo in remaining:
-                lang = repo.get("language", "Other")
-                if lang not in by_language:
-                    by_language[lang] = []
-                by_language[lang].append(repo["name"])
+        # GITHUB REPOSITORIES (Supplementary)
+        if github_repos:
+            prompt_parts.append("=" * 60)
+            prompt_parts.append(f"💻 GITHUB REPOSITORIES (username: {username}):")
+            prompt_parts.append("These are supplementary - use to show coding activity")
+            prompt_parts.append("=" * 60)
+            prompt_parts.append("")
             
-            for lang, repos_list in by_language.items():
-                prompt += f"**{lang}**: {', '.join(repos_list[:5])}"
-                if len(repos_list) > 5:
-                    prompt += f" (+{len(repos_list) - 5} more)"
-                prompt += "\n"
+            top_repos = github_repos[:5]
+            
+            for i, repo in enumerate(top_repos, 1):
+                stars = repo.get('stargazers_count', 0)
+                metrics = f"({stars} stars)" if stars > 0 else "(Featured)"
+                
+                prompt_parts.append(f"{i}. **{repo['name']}** {metrics}")
+                
+                if repo.get('description'):
+                    prompt_parts.append(f"   {repo['description']}")
+                
+                languages = repo.get('languages', [])
+                if languages:
+                    prompt_parts.append(f"   Languages: {', '.join(languages)}")
+                
+                prompt_parts.append(f"   URL: {repo['html_url']}")
+                prompt_parts.append("")
+            
+            if len(github_repos) > 5:
+                remaining = [r['name'] for r in github_repos[5:]]
+                prompt_parts.append(f"...and {len(remaining)} more repositories: {', '.join(remaining[:5])}")
+                prompt_parts.append("")
         
-        all_languages = set()
-        all_topics = set()
-        for repo in repos:
-            all_languages.update(repo.get("languages", []))
-            all_topics.update(repo.get("topics", []))
+        # No data at all
+        if not db_projects and not github_repos:
+            prompt_parts.append("No project data available.")
+            prompt_parts.append("")
         
-        prompt += f"""
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-OVERALL TECH STACK SUMMARY:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Languages/Frameworks: {', '.join(sorted(all_languages)) if all_languages else 'Various'}
-Key Topics: {', '.join(sorted(all_topics)[:10]) if all_topics else 'Various'}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-INSTRUCTIONS FOR YOUR RESPONSE:
-1. Focus on answering the user's specific question
-2. Highlight the MOST RELEVANT projects for their query
-3. Focus on what the projects DO and their technical features (NOT on star/fork counts)
-4. If a project has few or no stars, emphasize its innovation, complexity, and technical achievements
-5. NEVER use negative language like "Unfortunately", "only has", "just", or "no stars"
-6. Instead say: "Featured project", "Showcase project", "Demonstrates expertise in..."
-7. Group similar projects when helpful
-8. Be concise but informative
-9. Respond in {context.language.value}
-10. Format your response in a clear, professional manner
-
-Provide a helpful, technical response that emphasizes the candidate's skills and project quality, not popularity metrics.
-"""
+        # Instructions
+        prompt_parts.extend([
+            "=" * 60,
+            "INSTRUCTIONS:",
+            "=" * 60,
+            "1. PRIORITIZE database projects - they are curated and complete",
+            "2. Use GitHub repos as supplementary evidence of coding activity",
+            "3. If user asks about a specific project (e.g., Rebero), check DB projects FIRST",
+            "4. Focus on what projects DO and their technical achievements",
+            "5. If a project has few/no GitHub stars, emphasize innovation and complexity",
+            "6. Be concise, technical, and helpful",
+            f"7. Respond in {lang_name}",
+            "",
+        ])
         
-        return prompt
+        return "\n".join(prompt_parts)
